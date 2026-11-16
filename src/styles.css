@@ -307,3 +307,12 @@ input.value-control { width: 100%; min-width: 0; color: #bfcad0; font: 9px var(-
 .workspace-model > .canvas-toolbar { display:none; }
 .workspace-model > .stage-area { border-top:0; }
 .workspace-model > .stage-area > .stage-zoom-layer { width:100%;height:100%; }
+
+/* Model Studio owns its tool shelf, properties and mesh status; do not spend
+   viewport height on the generic project dock while editing topology. */
+.center-workspace.workspace-model .resize-handle.horizontal,
+.center-workspace.workspace-model .bottom-dock,
+.center-workspace.workspace-model .reopen-dock,
+.center-workspace.workspace-model .playing-banner { display: none !important; }
+.center-workspace.workspace-model .stage-area { flex: 1 1 auto; min-height: 0; }
+.center-workspace.workspace-model .stage-zoom-layer { height: 100%; }
