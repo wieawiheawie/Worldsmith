@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, Box, Brush, Camera, Check, ChevronDown, ChevronRight, CircleHelp,
-  Clock3, Cuboid, Eye, Folder, FolderOpen, Grid3X3, Image, Layers, Lightbulb,
+  Activity, ArrowDown, ArrowUp, Box, Brush, Camera, Check, ChevronDown, ChevronRight, CircleHelp,
+  Clock3, Command, Copy, Cuboid, Eye, Folder, FolderOpen, Grid3X3, Image, Layers, Lightbulb,
   Maximize2, MoreHorizontal, Move, MousePointer2, Music2, Orbit, Palette,
-  PanelBottom, PanelsTopLeft, Play, Plus, Redo2, RotateCw, Save, Search,
-  Settings2, SlidersHorizontal, Square, Terminal, Undo2, Upload, Workflow,
-  X, ZoomIn, ZoomOut
+  PanelBottom, PanelsTopLeft, Play, Plus, RotateCw, Search, Settings2, SlidersHorizontal,
+  Square, Terminal, Trash2, Upload, Workflow, X, ZoomIn, ZoomOut
 } from "lucide-react";
 
 type WorkspaceId = "Scene" | "Model" | "Materials" | "Animation" | "UI" | "Logic" | "Audio" | "Assets";
 type DockTab = "Assets" | "Timeline" | "Console";
 type ToolId = "select" | "move" | "rotate" | "scale" | "paint" | "sculpt";
+type TreeItem = { label: string; kind: string; indent?: number };
 
 const WORKSPACES: { id: WorkspaceId; icon: LucideIcon; hint: string }[] = [
   { id: "Scene", icon: PanelsTopLeft, hint: "Build worlds and arrange objects" },
@@ -33,7 +33,7 @@ const TOOLS: { id: ToolId; label: string; key: string; icon: LucideIcon }[] = [
   { id: "sculpt", label: "Sculpt", key: "S", icon: Orbit }
 ];
 
-const PANEL_ITEMS: Record<WorkspaceId, { label: string; kind: string; indent?: number }[]> = {
+const PANEL_ITEMS: Record<WorkspaceId, TreeItem[]> = {
   Scene: [
     { label: "World", kind: "folder" }, { label: "Main Camera", kind: "camera", indent: 1 },
     { label: "Sun Light", kind: "light", indent: 1 }, { label: "Environment", kind: "folder", indent: 1 },
@@ -84,6 +84,14 @@ const PANEL_ITEMS: Record<WorkspaceId, { label: string; kind: string; indent?: n
     { label: "Animations", kind: "folder", indent: 1 }, { label: "UI", kind: "folder", indent: 1 },
     { label: "Audio", kind: "folder", indent: 1 }, { label: "Scripts", kind: "folder", indent: 1 }
   ]
+};
+
+const EDITOR_MENUS: Record<string, string[]> = {
+  File: ["Save Project", "New Scene"],
+  Edit: ["Select All", "Duplicate Selection", "Delete Selection", "Move Selection Up", "Move Selection Down"],
+  View: ["Toggle Hierarchy", "Toggle Inspector", "Toggle Bottom Panel", "Toggle Grid", "Toggle Scene Labels"],
+  Window: ["Scene", "Model", "Materials", "Animation", "UI", "Logic", "Audio", "Assets"],
+  Help: ["Keyboard Shortcuts"]
 };
 
 const KIND_ICONS: Record<string, LucideIcon> = {
@@ -226,7 +234,7 @@ function WorkspaceStage({ workspace }: { workspace: WorkspaceId }) {
   if (workspace === "Logic") return <LogicCanvas />;
   if (workspace === "Audio") return <AudioCanvas />;
   return <div className="asset-library-stage">
-    <div className="asset-library-heading"><div><span className="eyebrow">PROJECT LIBRARY</span><h2>Your creative assets</h2><p>Everything in this project, ready to use in any workspace.</p></div><button className="secondary-button"><Upload size={14} /> Import assets</button></div>
+    <div className="asset-library-heading"><div><span className="eyebrow">PROJECT LIBRARY</span><h2>Your creative assets</h2><p>Everything in this project, ready to use in any workspace.</p></div><button className="secondary-button" onClick={() => document.getElementById("worldsmith-file-input")?.click()}><Upload size={14} /> Import assets</button></div>
     <div className="asset-library-cards">{[
       { title: "Character Base", type: "3D MODEL", cls: "asset-char", icon: Cuboid }, { title: "Forest Ground", type: "MATERIAL", cls: "asset-ground", icon: Palette },
       { title: "Walk Cycle", type: "ANIMATION", cls: "asset-motion", icon: Activity }, { title: "Main HUD", type: "UI CANVAS", cls: "asset-ui", icon: PanelsTopLeft },
@@ -248,7 +256,24 @@ function DockContent({ tab, workspace }: { tab: DockTab; workspace: WorkspaceId 
 function App() {
   const [workspace, setWorkspace] = useState<WorkspaceId>("Scene");
   const [selectedTool, setSelectedTool] = useState<ToolId>("select");
-  const [selectedObject, setSelectedObject] = useState("Terrain");
+  const [workspaceItems, setWorkspaceItems] = useState<Record<WorkspaceId, TreeItem[]>>(() => {
+    try {
+      const saved = window.localStorage.getItem("worldsmith-editor-state");
+      if (saved) {
+        const parsed = JSON.parse(saved) as { workspaceItems?: Record<WorkspaceId, TreeItem[]> };
+        if (parsed.workspaceItems) return parsed.workspaceItems;
+      }
+    } catch { /* Start with the sample project when saved data is unavailable. */ }
+    return PANEL_ITEMS;
+  });
+  const [selectedObjects, setSelectedObjects] = useState<string[]>(["Terrain"]);
+  const [selectionAnchor, setSelectionAnchor] = useState("Terrain");
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [gridVisible, setGridVisible] = useState(true);
+  const [sceneLabelsVisible, setSceneLabelsVisible] = useState(true);
+  const [cameraView, setCameraView] = useState("Perspective");
+  const [importedAssets, setImportedAssets] = useState<string[]>([]);
   const [dockTab, setDockTab] = useState<DockTab>("Assets");
   const [inspectorTab, setInspectorTab] = useState<"Properties" | "Components">("Properties");
   const [playing, setPlaying] = useState(false);
@@ -266,8 +291,130 @@ function App() {
   const [bottomHeight, setBottomHeight] = useState(186);
 
   const current = WORKSPACES.find((item) => item.id === workspace)!;
-  const panelItems = PANEL_ITEMS[workspace].filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+  const panelItems = workspaceItems[workspace].filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+  const selectedObject = selectedObjects[selectedObjects.length - 1] ?? "No selection";
   const announce = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(""), 2400); };
+  const saveProject = () => {
+    try {
+      window.localStorage.setItem("worldsmith-editor-state", JSON.stringify({ workspaceItems, workspace, importedAssets }));
+      announce("Project saved in this browser");
+    } catch {
+      announce("Could not save: browser storage is full or unavailable");
+    }
+  };
+  const createItem = (label: string, kind: string) => {
+    const existing = new Set(workspaceItems[workspace].map((item) => item.label));
+    let uniqueLabel = label;
+    let suffix = 2;
+    while (existing.has(uniqueLabel)) { uniqueLabel = `${label} ${suffix++}`; }
+    setWorkspaceItems((items) => ({ ...items, [workspace]: [...items[workspace], { label: uniqueLabel, kind }] }));
+    setSelectedObjects([uniqueLabel]);
+    setSelectionAnchor(uniqueLabel);
+    setSearch("");
+    announce(`${uniqueLabel} added`);
+  };
+  const selectTreeItem = (label: string, index: number, event: import("react").MouseEvent<HTMLButtonElement>) => {
+    if (event.shiftKey) {
+      const anchorIndex = panelItems.findIndex((item) => item.label === selectionAnchor);
+      const start = anchorIndex < 0 ? index : Math.min(anchorIndex, index);
+      const end = anchorIndex < 0 ? index : Math.max(anchorIndex, index);
+      setSelectedObjects(panelItems.slice(start, end + 1).map((item) => item.label));
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedObjects((selection) => selection.includes(label)
+        ? selection.filter((item) => item !== label)
+        : [...selection, label]);
+      setSelectionAnchor(label);
+      return;
+    }
+    setSelectedObjects([label]);
+    setSelectionAnchor(label);
+  };
+  const selectAll = () => {
+    const labels = panelItems.map((item) => item.label);
+    setSelectedObjects(labels);
+    setSelectionAnchor(labels[0] ?? "");
+    announce(`${labels.length} item${labels.length === 1 ? "" : "s"} selected`);
+  };
+  const deleteSelection = () => {
+    if (selectedObjects.length === 0) { announce("Nothing selected"); return; }
+    const items = workspaceItems[workspace];
+    const remove = new Set<number>();
+    items.forEach((item, index) => {
+      if (!selectedObjects.includes(item.label)) return;
+      remove.add(index);
+      if (item.kind === "folder") {
+        const baseIndent = item.indent ?? 0;
+        for (let child = index + 1; child < items.length && (items[child].indent ?? 0) > baseIndent; child++) remove.add(child);
+      }
+    });
+    const remaining = items.filter((_, index) => !remove.has(index));
+    setWorkspaceItems((all) => ({ ...all, [workspace]: remaining }));
+    const firstDeletedIndex = items.findIndex((item) => selectedObjects.includes(item.label));
+    const fallback = remaining[Math.min(Math.max(0, firstDeletedIndex), remaining.length - 1)]?.label;
+    setSelectedObjects(fallback ? [fallback] : []);
+    setSelectionAnchor(fallback ?? "");
+    announce(`${remove.size} item${remove.size === 1 ? "" : "s"} deleted`);
+  };
+  const duplicateSelection = () => {
+    if (selectedObjects.length === 0) { announce("Nothing selected"); return; }
+    const items = workspaceItems[workspace];
+    const selected = items.filter((item) => selectedObjects.includes(item.label));
+    if (selected.length === 0) return;
+    const names = new Set(items.map((item) => item.label));
+    const copies = selected.map((item) => {
+      let label = `${item.label} Copy`;
+      let suffix = 2;
+      while (names.has(label)) label = `${item.label} Copy ${suffix++}`;
+      names.add(label);
+      return { ...item, label };
+    });
+    const lastIndex = Math.max(...items.map((item, index) => selectedObjects.includes(item.label) ? index : -1));
+    const next = [...items];
+    next.splice(lastIndex + 1, 0, ...copies);
+    setWorkspaceItems((all) => ({ ...all, [workspace]: next }));
+    setSelectedObjects(copies.map((item) => item.label));
+    setSelectionAnchor(copies[0].label);
+    announce(`${copies.length} item${copies.length === 1 ? "" : "s"} duplicated`);
+  };
+  const moveSelection = (direction: -1 | 1) => {
+    if (selectedObjects.length === 0) { announce("Nothing selected"); return; }
+    const next = [...workspaceItems[workspace]];
+    const selected = new Set(selectedObjects);
+    let moved = false;
+    if (direction < 0) {
+      for (let i = 1; i < next.length; i++) {
+        if (selected.has(next[i].label) && !selected.has(next[i - 1].label)) {
+          [next[i - 1], next[i]] = [next[i], next[i - 1]];
+          moved = true;
+        }
+      }
+    } else {
+      for (let i = next.length - 2; i >= 0; i--) {
+        if (selected.has(next[i].label) && !selected.has(next[i + 1].label)) {
+          [next[i], next[i + 1]] = [next[i + 1], next[i]];
+          moved = true;
+        }
+      }
+    }
+    if (moved) setWorkspaceItems((all) => ({ ...all, [workspace]: next }));
+    announce(moved ? "Selection moved in the hierarchy" : "Selection is already at that end of the hierarchy");
+  };
+  const importFiles = (files: FileList | null) => {
+    const names = Array.from(files ?? []).map((file) => file.name);
+    if (names.length === 0) return;
+    const existing = new Set(workspaceItems.Assets.map((item) => item.label));
+    const additions = names.filter((name) => !existing.has(name)).map((name) => ({ label: name, kind: "image", indent: 1 }));
+    setWorkspaceItems((all) => ({ ...all, Assets: [...all.Assets, ...additions] }));
+    setImportedAssets((all) => [...all, ...additions.map((item) => item.label)]);
+    setWorkspace("Assets");
+    setSelectedObjects(additions.map((item) => item.label));
+    setSelectionAnchor(additions[0]?.label ?? "");
+    setDockTab("Assets");
+    setShowBottom(true);
+    announce(`${additions.length} file reference${additions.length === 1 ? "" : "s"} added to the asset list`);
+  };
   const beginResize = (side: "left" | "right" | "bottom", event: import("react").PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX; const startY = event.clientY;
@@ -284,36 +431,77 @@ function App() {
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setShowPalette(true); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); announce("Project saved locally"); }
-      if (event.key === "Escape") { setShowPalette(false); setShowAddMenu(false); }
-      if (!typing && event.code === "Space") { event.preventDefault(); setPlaying((value) => !value); }
-      if (!typing && ["q", "w", "e", "r", "b", "s"].includes(event.key.toLowerCase())) {
+      const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      const shortcut = event.ctrlKey || event.metaKey;
+      if (shortcut && event.key.toLowerCase() === "k") { event.preventDefault(); setShowPalette(true); return; }
+      if (shortcut && event.key.toLowerCase() === "s") { event.preventDefault(); saveProject(); return; }
+      if (shortcut && !typing && event.key.toLowerCase() === "d") { event.preventDefault(); duplicateSelection(); return; }
+      if (event.key === "Escape") { setShowPalette(false); setShowAddMenu(false); setActiveMenu(null); setShowHelp(false); }
+      if (typing) return;
+      if (shortcut && event.key.toLowerCase() === "a") { event.preventDefault(); selectAll(); return; }
+      if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); deleteSelection(); return; }
+      if (event.altKey && event.key === "ArrowUp") { event.preventDefault(); moveSelection(-1); return; }
+      if (event.altKey && event.key === "ArrowDown") { event.preventDefault(); moveSelection(1); return; }
+      if (event.code === "Space") { event.preventDefault(); setPlaying((value) => !value); return; }
+      if (["q", "w", "e", "r", "b", "s"].includes(event.key.toLowerCase())) {
         const map: Record<string, ToolId> = { q: "select", w: "move", e: "rotate", r: "scale", b: "paint", s: "sculpt" };
         setSelectedTool(map[event.key.toLowerCase()]);
       }
     };
     window.addEventListener("keydown", handleKeys);
     return () => window.removeEventListener("keydown", handleKeys);
-  }, []);
+  }, [saveProject, duplicateSelection, selectAll, deleteSelection, moveSelection]);
 
-  const commands = useMemo(() => ["Create new scene", "Add cube", "Add sphere", "Add light", "Open Model Studio", "Open Materials Studio", "Open Animation Studio", "Open UI Studio", "Open Logic Studio", "Toggle asset panel", "Toggle inspector", "Save project", "Play preview"].filter((item) => item.toLowerCase().includes(paletteQuery.toLowerCase())), [paletteQuery]);
-  const chooseWorkspace = (id: WorkspaceId) => { setWorkspace(id); setSearch(""); setSelectedTool("select"); setSelectedObject(PANEL_ITEMS[id][0]?.label ?? ""); setInspectorTab("Properties"); announce(id + " workspace"); };
+  const commands = useMemo(() => ["Create new scene", "Add cube", "Add sphere", "Add light", "Select all", "Duplicate selection", "Delete selection", "Move selection up", "Move selection down", "Open Model Studio", "Open Materials Studio", "Open Animation Studio", "Open UI Studio", "Open Logic Studio", "Toggle hierarchy", "Toggle inspector", "Save project", "Play preview"].filter((item) => item.toLowerCase().includes(paletteQuery.toLowerCase())), [paletteQuery]);
+  const chooseWorkspace = (id: WorkspaceId) => {
+    setWorkspace(id); setSearch(""); setSelectedTool("select");
+    const first = workspaceItems[id][0]?.label ?? "";
+    setSelectedObjects(first ? [first] : []); setSelectionAnchor(first);
+    setInspectorTab("Properties"); announce(id + " workspace");
+  };
+  const runMenuAction = (action: string) => {
+    if (action === "Save Project") saveProject();
+    else if (action === "New Scene") {
+      const freshScene: TreeItem[] = [{ label: "World", kind: "folder" }];
+      setWorkspaceItems((all) => ({ ...all, Scene: freshScene }));
+      setWorkspace("Scene"); setSelectedObjects(["World"]); setSelectionAnchor("World"); setSearch("");
+      announce("New empty scene created");
+    } else if (action === "Select All") selectAll();
+    else if (action === "Duplicate Selection") duplicateSelection();
+    else if (action === "Delete Selection") deleteSelection();
+    else if (action === "Move Selection Up") moveSelection(-1);
+    else if (action === "Move Selection Down") moveSelection(1);
+    else if (action === "Toggle Hierarchy") setShowLeft((value) => !value);
+    else if (action === "Toggle Inspector") setShowRight((value) => !value);
+    else if (action === "Toggle Bottom Panel") setShowBottom((value) => !value);
+    else if (action === "Toggle Grid") setGridVisible((value) => !value);
+    else if (action === "Toggle Scene Labels") setSceneLabelsVisible((value) => !value);
+    else if (action === "Keyboard Shortcuts") setShowHelp(true);
+    else if (WORKSPACES.some((item) => item.id === action)) chooseWorkspace(action as WorkspaceId);
+    setActiveMenu(null);
+  };
   const runCommand = (command: string) => {
-    if (command.includes("Model")) setWorkspace("Model");
-    else if (command.includes("Materials")) setWorkspace("Materials");
-    else if (command.includes("Animation")) setWorkspace("Animation");
-    else if (command.includes("UI")) setWorkspace("UI");
-    else if (command.includes("Logic")) setWorkspace("Logic");
-    else if (command.includes("inspector")) setShowRight((value) => !value);
-    else if (command.includes("asset")) setShowLeft((value) => !value);
-    else if (command.includes("Play")) setPlaying((value) => !value);
-    else if (command.includes("Save")) announce("Project saved locally");
-    else if (command.includes("Add")) setShowAddMenu(true);
-    else announce("New scene ready");
-    setShowPalette(false);
-    setPaletteQuery("");
+    const lower = command.toLowerCase();
+    if (lower === "create new scene") runMenuAction("New Scene");
+    else if (lower === "add cube") createItem("Cube", "mesh");
+    else if (lower === "add sphere") createItem("Sphere", "mesh");
+    else if (lower === "add light") createItem("Light", "light");
+    else if (lower === "select all") selectAll();
+    else if (lower === "duplicate selection") duplicateSelection();
+    else if (lower === "delete selection") deleteSelection();
+    else if (lower === "move selection up") moveSelection(-1);
+    else if (lower === "move selection down") moveSelection(1);
+    else if (lower.includes("model")) chooseWorkspace("Model");
+    else if (lower.includes("materials")) chooseWorkspace("Materials");
+    else if (lower.includes("animation")) chooseWorkspace("Animation");
+    else if (lower.includes("ui studio")) chooseWorkspace("UI");
+    else if (lower.includes("logic")) chooseWorkspace("Logic");
+    else if (lower.includes("inspector")) setShowRight((value) => !value);
+    else if (lower.includes("hierarchy")) setShowLeft((value) => !value);
+    else if (lower.includes("play")) setPlaying((value) => !value);
+    else if (lower.includes("save")) saveProject();
+    else if (lower.includes("add")) setShowAddMenu(true);
+    setShowPalette(false); setPaletteQuery("");
   };
   const workspaceTitle: Record<WorkspaceId, string> = {
     Scene: "Scene hierarchy", Model: "Model outliner", Materials: "Material layers", Animation: "Rig hierarchy",
@@ -325,36 +513,36 @@ function App() {
       <header className="topbar">
         <div className="brand-lockup"><div className="brand-mark"><span /><span /><span /></div><div className="brand-name">worldsmith<span>studio</span></div></div>
         <div className="topbar-divider" />
-        <button className="project-switcher" onClick={() => announce("Project menu is ready for the project manager milestone")}><span className="project-icon"><Cuboid size={17} /></span><span className="project-label"><strong>Untitled World</strong><small>My Projects <span>/</span> Main Scene</small></span><ChevronDown size={14} /></button>
-        <div className="menu-links"><button>File</button><button>Edit</button><button>View</button><button>Window</button><button>Help</button></div>
+        <button className="project-switcher" onClick={() => setActiveMenu((menu) => menu === "File" ? null : "File")}><span className="project-icon"><Cuboid size={17} /></span><span className="project-label"><strong>Untitled World</strong><small>My Projects <span>/</span> Main Scene</small></span><ChevronDown size={14} /></button>
+        <div className="menu-links">{Object.keys(EDITOR_MENUS).map((menu) => <div className="menu-item" key={menu}><button className={activeMenu === menu ? "menu-active" : ""} onClick={() => setActiveMenu((currentMenu) => currentMenu === menu ? null : menu)}>{menu}</button>{activeMenu === menu && <div className="menu-dropdown">{EDITOR_MENUS[menu].map((action) => <button key={action} onClick={() => runMenuAction(action)}>{action}</button>)}</div>}</div>)}</div>
         <div className="topbar-spacer" />
         <button className="command-trigger" onClick={() => setShowPalette(true)}><Search size={14} /><span>Search anything...</span><kbd>⌘ K</kbd></button>
         <div className="save-status"><span className="save-dot" />All changes saved</div>
-        <button className="icon-button top-icon" title="Settings" onClick={() => announce("Settings will be added to project preferences")}><Settings2 size={17} /></button>
-        <button className="preview-button" onClick={() => announce("Preview settings opened")}><Eye size={15} /> Preview</button>
+        <button className="icon-button top-icon" title="Keyboard shortcuts and help" onClick={() => setShowHelp(true)}><Settings2 size={17} /></button>
+        <button className="preview-button" onClick={() => setPlaying((value) => !value)}><Eye size={15} /> {playing ? "Exit Preview" : "Preview"}</button>
         <button className={"play-button " + (playing ? "is-playing" : "")} onClick={() => setPlaying((value) => !value)}>{playing ? <Square size={13} fill="currentColor" /> : <Play size={14} fill="currentColor" />}<span>{playing ? "Stop" : "Play"}</span></button>
       </header>
 
-      <nav className="workspace-bar" aria-label="Creative workspaces"><div className="workspace-tabs">{WORKSPACES.map((item) => { const Icon = item.icon; return <button key={item.id} className={"workspace-tab " + (workspace === item.id ? "active" : "")} onClick={() => chooseWorkspace(item.id)} title={item.hint}><Icon size={16} strokeWidth={1.8} /><span>{item.id}</span></button>; })}</div><div className="workspace-bar-right"><span className="workspace-hint">{current.hint}</span><button className="icon-button" title="Workspace settings" onClick={() => announce("Workspace settings")}><SlidersHorizontal size={15} /></button></div></nav>
+      <nav className="workspace-bar" aria-label="Creative workspaces"><div className="workspace-tabs">{WORKSPACES.map((item) => { const Icon = item.icon; return <button key={item.id} className={"workspace-tab " + (workspace === item.id ? "active" : "")} onClick={() => chooseWorkspace(item.id)} title={item.hint}><Icon size={16} strokeWidth={1.8} /><span>{item.id}</span></button>; })}</div><div className="workspace-bar-right"><span className="workspace-hint">{current.hint}</span><button className="icon-button" title="Toggle grid visibility" onClick={() => setGridVisible((value) => !value)}><SlidersHorizontal size={15} /></button></div></nav>
 
       <div className="editor-layout">
-        <aside className="tool-rail"><div className="rail-tools">{TOOLS.map((tool) => { const Icon = tool.icon; return <button key={tool.id} className={"rail-tool " + (selectedTool === tool.id ? "active" : "")} title={tool.label + " (" + tool.key + ")"} onClick={() => setSelectedTool(tool.id)}><Icon size={18} /><span>{tool.key}</span></button>; })}</div><div className="rail-bottom"><button className="rail-tool" title="Help" onClick={() => announce("Worldsmith help centre")}><CircleHelp size={18} /></button><button className="rail-tool" title="Preferences" onClick={() => announce("Preferences")}><Settings2 size={18} /></button></div></aside>
+        <aside className="tool-rail"><div className="rail-tools">{TOOLS.map((tool) => { const Icon = tool.icon; return <button key={tool.id} className={"rail-tool " + (selectedTool === tool.id ? "active" : "")} title={tool.label + " (" + tool.key + ")"} onClick={() => setSelectedTool(tool.id)}><Icon size={18} /><span>{tool.key}</span></button>; })}</div><div className="rail-bottom"><button className="rail-tool" title="Keyboard shortcuts" onClick={() => setShowHelp(true)}><CircleHelp size={18} /></button><button className="rail-tool" title="Preferences and shortcuts" onClick={() => setShowHelp(true)}><Settings2 size={18} /></button></div></aside>
 
         {showLeft && <aside className="left-panel" style={{ width: leftWidth, flexBasis: leftWidth }}>
           <div className="panel-heading"><div><span className="eyebrow">WORKSPACE</span><h2>{workspaceTitle[workspace]}</h2></div><button className="subtle-icon" onClick={() => setShowLeft(false)} title="Hide panel"><X size={14} /></button></div>
-          <div className="panel-action-row"><button className="subtle-select"><Layers size={13} /> {workspace === "Assets" ? "All assets" : workspace === "UI" ? "HUD_Main" : workspace === "Logic" ? "Player Controller" : workspace === "Animation" ? "Character Rig" : workspace === "Materials" ? "Character Material" : workspace === "Model" ? "Character Mesh" : workspace === "Audio" ? "Main Audio" : "Main Scene"} <ChevronDown size={12} /></button><button className="subtle-icon" title="Add item" onClick={() => setShowAddMenu(true)}><Plus size={15} /></button></div>
+          <div className="panel-action-row"><button className="subtle-select" title="Select the root item and clear the filter" onClick={() => { setSearch(""); const root = workspaceItems[workspace][0]; if (root) { setSelectedObjects([root.label]); setSelectionAnchor(root.label); } }}><Layers size={13} /> {workspace === "Assets" ? "All assets" : workspace === "UI" ? "HUD_Main" : workspace === "Logic" ? "Player Controller" : workspace === "Animation" ? "Character Rig" : workspace === "Materials" ? "Character Material" : workspace === "Model" ? "Character Mesh" : workspace === "Audio" ? "Main Audio" : "Main Scene"} <ChevronDown size={12} /></button><button className="subtle-icon" title="Add item" onClick={() => setShowAddMenu(true)}><Plus size={15} /></button></div>
           <div className="panel-search"><Search size={13} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={"Filter " + workspace.toLowerCase() + "..."} /><kbd>⌘ F</kbd></div>
-          <div className="tree-list">{panelItems.map((item, index) => { const Icon = KIND_ICONS[item.kind] || Box; return <button key={item.label} className={"tree-item " + (selectedObject === item.label ? "selected" : "")} style={{ paddingLeft: 12 + (item.indent || 0) * 15 }} onClick={() => setSelectedObject(item.label)}>{item.indent ? <ChevronRight className="tree-chevron" size={12} /> : <span className="tree-spacer" />}<Icon size={14} className={"tree-kind kind-" + item.kind} /><span>{item.label}</span>{index === 0 && <MoreHorizontal size={14} className="tree-more" />}</button>; })}{panelItems.length === 0 && <div className="empty-filter">No matching items</div>}</div>
-          <div className="panel-footer"><span>{panelItems.length} items</span><span>● Synced</span></div>
+          <div className="tree-list">{panelItems.map((item, index) => { const Icon = KIND_ICONS[item.kind] || Box; return <button key={item.label} aria-selected={selectedObjects.includes(item.label)} title="Click to select · Shift-click for a range · Ctrl/Cmd-click to add or remove" className={"tree-item " + (selectedObjects.includes(item.label) ? "selected" : "")} style={{ paddingLeft: 12 + (item.indent || 0) * 15 }} onClick={(event) => selectTreeItem(item.label, index, event)}>{item.indent ? <ChevronRight className="tree-chevron" size={12} /> : <span className="tree-spacer" />}<Icon size={14} className={"tree-kind kind-" + item.kind} /><span>{item.label}</span>{index === 0 && <MoreHorizontal size={14} className="tree-more" />}</button>; })}{panelItems.length === 0 && <div className="empty-filter">No matching items</div>}</div>
+          <div className="panel-footer"><span>{panelItems.length} items · {selectedObjects.length} selected</span><span className="tree-footer-actions"><button title="Duplicate selected" onClick={duplicateSelection} disabled={selectedObjects.length === 0}><Copy size={12} /></button><button title="Move selected up" onClick={() => moveSelection(-1)} disabled={selectedObjects.length === 0}><ArrowUp size={12} /></button><button title="Move selected down" onClick={() => moveSelection(1)} disabled={selectedObjects.length === 0}><ArrowDown size={12} /></button><button title="Delete selected" onClick={deleteSelection} disabled={selectedObjects.length === 0}><Trash2 size={12} /></button></span></div>
         </aside>}<div className="resize-handle vertical" onPointerDown={(event) => beginResize("left", event)} title="Resize hierarchy" /><main className="center-workspace">
           <div className="canvas-toolbar"><div className="canvas-breadcrumb"><span>{workspace}</span><ChevronRight size={12} /><strong>{workspace === "Scene" ? "Main Scene" : workspace === "UI" ? "HUD_Main" : workspace === "Assets" ? "All Assets" : workspace === "Logic" ? "Player Controller" : workspace === "Audio" ? "Main Audio" : workspace === "Model" ? "Character_Mesh" : workspace === "Materials" ? "Character Material" : "Walk_Cycle"}</strong><span className="unsaved-mark" /></div>
-            <div className="canvas-tool-actions"><button className={"canvas-tool-button " + (selectedTool === "select" ? "active" : "")} onClick={() => setSelectedTool("select")} title="Select"><MousePointer2 size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "move" ? "active" : "")} onClick={() => setSelectedTool("move")} title="Move"><Move size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "rotate" ? "active" : "")} onClick={() => setSelectedTool("rotate")} title="Rotate"><RotateCw size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "scale" ? "active" : "")} onClick={() => setSelectedTool("scale")} title="Scale"><Maximize2 size={15} /></button><span className="toolbar-separator" /><button className="canvas-tool-button" title="Toggle grid" onClick={() => announce("Grid visibility toggled")}><Grid3X3 size={15} /></button><button className="canvas-tool-button" title="Camera view" onClick={() => announce("Camera view options")}><Camera size={15} /></button><button className="canvas-tool-button" title="Viewport options" onClick={() => announce("Viewport options")}><MoreHorizontal size={16} /></button></div>
-            <div className="canvas-right-actions"><span className="view-mode">{workspace === "UI" ? "Design" : workspace === "Logic" ? "Graph" : workspace === "Audio" ? "Waveform" : workspace === "Assets" ? "Gallery" : "Perspective"} <ChevronDown size={12} /></span><button className="canvas-tool-button" title="Fit view" onClick={() => setZoom(75)}><Maximize2 size={14} /></button></div>
+            <div className="canvas-tool-actions"><button className={"canvas-tool-button " + (selectedTool === "select" ? "active" : "")} onClick={() => setSelectedTool("select")} title="Select"><MousePointer2 size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "move" ? "active" : "")} onClick={() => setSelectedTool("move")} title="Move"><Move size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "rotate" ? "active" : "")} onClick={() => setSelectedTool("rotate")} title="Rotate"><RotateCw size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "scale" ? "active" : "")} onClick={() => setSelectedTool("scale")} title="Scale"><Maximize2 size={15} /></button><span className="toolbar-separator" /><button className={"canvas-tool-button " + (gridVisible ? "active" : "")} title="Toggle grid" onClick={() => setGridVisible((value) => !value)}><Grid3X3 size={15} /></button><button className="canvas-tool-button" title="Cycle camera view" onClick={() => setCameraView((view) => view === "Perspective" ? "Top" : view === "Top" ? "Front" : "Perspective")}><Camera size={15} /></button><button className="canvas-tool-button" title="Viewport options (View menu)" onClick={() => setActiveMenu((menu) => menu === "View" ? null : "View")}><MoreHorizontal size={16} /></button></div>
+            <div className="canvas-right-actions"><span className="view-mode">{workspace === "UI" ? "Design" : workspace === "Logic" ? "Graph" : workspace === "Audio" ? "Waveform" : workspace === "Assets" ? "Gallery" : cameraView} <ChevronDown size={12} /></span><button className="canvas-tool-button" title="Fit view" onClick={() => setZoom(75)}><Maximize2 size={14} /></button></div>
           </div>
 
-          <section className={"stage-area stage-" + workspace.toLowerCase()}><WorkspaceStage workspace={workspace} />{playing && <div className="playing-banner"><span className="playing-dot" /> LIVE PREVIEW <button onClick={() => setPlaying(false)}>Stop preview</button></div>}{workspace !== "Assets" && <div className="stage-zoom-controls"><button onClick={() => setZoom((value) => Math.max(25, value - 5))}><ZoomOut size={13} /></button><span>{zoom}%</span><button onClick={() => setZoom((value) => Math.min(150, value + 5))}><ZoomIn size={13} /></button></div>}</section>
+          <section className={"stage-area stage-" + workspace.toLowerCase() + (gridVisible ? "" : " grid-hidden") + (sceneLabelsVisible ? "" : " labels-hidden")}><WorkspaceStage workspace={workspace} />{playing && <div className="playing-banner"><span className="playing-dot" /> LIVE PREVIEW <button onClick={() => setPlaying(false)}>Stop preview</button></div>}{workspace !== "Assets" && <div className="stage-zoom-controls"><button onClick={() => setZoom((value) => Math.max(25, value - 5))}><ZoomOut size={13} /></button><span>{zoom}%</span><button onClick={() => setZoom((value) => Math.min(150, value + 5))}><ZoomIn size={13} /></button></div>}</section>
 
-          {showBottom && <div className="resize-handle horizontal" onPointerDown={(event) => beginResize("bottom", event)} title="Resize bottom panel" />}{showBottom && <section className="bottom-dock" style={{ height: bottomHeight, flexBasis: bottomHeight }}><div className="dock-header"><div className="dock-tabs"><button className={dockTab === "Assets" ? "active" : ""} onClick={() => setDockTab("Assets")}><FolderOpen size={14} /> Assets</button><button className={dockTab === "Timeline" ? "active" : ""} onClick={() => setDockTab("Timeline")}><Clock3 size={14} /> Timeline</button><button className={dockTab === "Console" ? "active" : ""} onClick={() => setDockTab("Console")}><Terminal size={14} /> Console <span className="console-count">2</span></button></div><div className="dock-actions"><button className="subtle-icon" title="Add asset" onClick={() => announce("Asset import will be connected in the asset pipeline milestone")}><Plus size={14} /></button><button className="subtle-icon" title="Collapse bottom panel" onClick={() => setShowBottom(false)}><PanelBottom size={14} /></button></div></div><div className="dock-body"><DockContent tab={dockTab} workspace={workspace} /></div></section>}
+          {showBottom && <div className="resize-handle horizontal" onPointerDown={(event) => beginResize("bottom", event)} title="Resize bottom panel" />}{showBottom && <section className="bottom-dock" style={{ height: bottomHeight, flexBasis: bottomHeight }}><div className="dock-header"><div className="dock-tabs"><button className={dockTab === "Assets" ? "active" : ""} onClick={() => setDockTab("Assets")}><FolderOpen size={14} /> Assets</button><button className={dockTab === "Timeline" ? "active" : ""} onClick={() => setDockTab("Timeline")}><Clock3 size={14} /> Timeline</button><button className={dockTab === "Console" ? "active" : ""} onClick={() => setDockTab("Console")}><Terminal size={14} /> Console <span className="console-count">2</span></button></div><div className="dock-actions"><button className="subtle-icon" title="Add asset files" onClick={() => document.getElementById("worldsmith-file-input")?.click()}><Plus size={14} /></button><button className="subtle-icon" title="Collapse bottom panel" onClick={() => setShowBottom(false)}><PanelBottom size={14} /></button></div></div><div className="dock-body"><DockContent tab={dockTab} workspace={workspace} />{importedAssets.length > 0 && <div className="imported-asset-list">{importedAssets.map((name, index) => <span key={`${name}-${index}`}>{name}</span>)}</div>}</div></section>}
           {!showBottom && <button className="reopen-dock" onClick={() => setShowBottom(true)}><PanelBottom size={14} /> Show bottom panel</button>}
         </main>{showRight && <div className="resize-handle vertical" onPointerDown={(event) => beginResize("right", event)} title="Resize inspector" />}{showRight && <aside className="right-panel" style={{ width: rightWidth, flexBasis: rightWidth }}>
           <div className="inspector-top"><div><span className="eyebrow">INSPECTOR</span><h2>{selectedObject}</h2></div><button className="subtle-icon" onClick={() => setShowRight(false)} title="Hide inspector"><X size={14} /></button></div>
@@ -380,7 +568,9 @@ function App() {
       {(!showLeft || !showRight) && <div className="panel-restore">{!showLeft && <button onClick={() => setShowLeft(true)}><Layers size={14} /> Show hierarchy</button>}{!showRight && <button onClick={() => setShowRight(true)}><SlidersHorizontal size={14} /> Show inspector</button>}</div>}
       <footer className="statusbar"><div className="status-left"><span className="status-branch"><span className="tiny-dot" /> Main</span><span className="status-separator" /><span>Worldsmith Shell Preview</span></div><div className="status-right"><span>Local project</span><span className="status-separator" /><span>Web editor</span><span className="status-separator" /><span>100% UI scale</span></div></footer>
 
-      {showAddMenu && <div className="popover-backdrop" onClick={() => setShowAddMenu(false)}><div className="add-menu popover-card" onClick={(event) => event.stopPropagation()}><div className="popover-title">Add to {workspace}<button onClick={() => setShowAddMenu(false)}><X size={14} /></button></div><button onClick={() => { setSelectedObject("Cube"); setShowAddMenu(false); announce("Cube added to the scene outline"); }}><Box size={15} /><span><strong>Cube</strong><small>Basic 3D primitive</small></span></button><button onClick={() => { setSelectedObject("Sphere"); setShowAddMenu(false); announce("Sphere added to the scene outline"); }}><Orbit size={15} /><span><strong>Sphere</strong><small>Basic 3D primitive</small></span></button><button onClick={() => { setSelectedObject("Camera"); setShowAddMenu(false); announce("Camera added to the scene outline"); }}><Camera size={15} /><span><strong>Camera</strong><small>Scene camera</small></span></button><button onClick={() => { setSelectedObject("Light"); setShowAddMenu(false); announce("Light added to the scene outline"); }}><Lightbulb size={15} /><span><strong>Light</strong><small>Illuminate your scene</small></span></button><div className="popover-foot">More creation tools will appear here as they are implemented.</div></div></div>}
+      <input id="worldsmith-file-input" type="file" multiple hidden onChange={(event) => { importFiles(event.target.files); event.target.value = ""; }} />
+      {showHelp && <div className="palette-backdrop" onClick={() => setShowHelp(false)}><div className="shortcuts-card" onClick={(event) => event.stopPropagation()}><div className="popover-title">Keyboard shortcuts <button onClick={() => setShowHelp(false)}><X size={14} /></button></div><div className="shortcut-row"><span>Select tool</span><kbd>Q</kbd></div><div className="shortcut-row"><span>Move / Rotate / Scale</span><kbd>W / E / R</kbd></div><div className="shortcut-row"><span>Shift-click range select</span><kbd>Shift + Click</kbd></div><div className="shortcut-row"><span>Add or remove from selection</span><kbd>Ctrl/Cmd + Click</kbd></div><div className="shortcut-row"><span>Select all visible items</span><kbd>Ctrl/Cmd + A</kbd></div><div className="shortcut-row"><span>Duplicate selection</span><kbd>Ctrl/Cmd + D</kbd></div><div className="shortcut-row"><span>Delete selection</span><kbd>Delete</kbd></div><div className="shortcut-row"><span>Reorder selection</span><kbd>Alt + ↑ / ↓</kbd></div><div className="shortcut-row"><span>Save in this browser</span><kbd>Ctrl/Cmd + S</kbd></div><div className="shortcut-row"><span>Command palette</span><kbd>Ctrl/Cmd + K</kbd></div></div></div>}
+      {showAddMenu && <div className="popover-backdrop" onClick={() => setShowAddMenu(false)}><div className="add-menu popover-card" onClick={(event) => event.stopPropagation()}><div className="popover-title">Add to {workspace}<button onClick={() => setShowAddMenu(false)}><X size={14} /></button></div><button onClick={() => { createItem("Cube", "mesh"); setShowAddMenu(false); }}><Box size={15} /><span><strong>Cube</strong><small>Basic 3D primitive</small></span></button><button onClick={() => { createItem("Sphere", "mesh"); setShowAddMenu(false); }}><Orbit size={15} /><span><strong>Sphere</strong><small>Basic 3D primitive</small></span></button><button onClick={() => { createItem("Camera", "camera"); setShowAddMenu(false); }}><Camera size={15} /><span><strong>Camera</strong><small>Scene camera</small></span></button><button onClick={() => { createItem("Light", "light"); setShowAddMenu(false); }}><Lightbulb size={15} /><span><strong>Light</strong><small>Illuminate your scene</small></span></button><div className="popover-foot">More creation tools will appear here as they are implemented.</div></div></div>}
 
       {showPalette && <div className="palette-backdrop" onClick={() => setShowPalette(false)}><div className="command-palette" onClick={(event) => event.stopPropagation()}><div className="palette-search"><Search size={17} /><input autoFocus value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder="Search actions, workspaces and tools..." /><kbd>ESC</kbd></div><div className="palette-caption">SUGGESTED ACTIONS</div><div className="palette-results">{commands.map((command) => <button key={command} onClick={() => runCommand(command)}><Command size={14} /><span>{command}</span><ChevronRight size={13} /></button>)}{commands.length === 0 && <div className="empty-filter">No matching commands</div>}</div><div className="palette-foot"><span>↑↓ Navigate</span><span>↵ Select</span><span>Esc Close</span></div></div></div>}
       {notice && <div className="toast"><Check size={15} />{notice}</div>}
