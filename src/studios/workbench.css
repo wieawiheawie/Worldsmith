@@ -118,3 +118,8 @@
 .wb-icon-danger { padding:6px;color:#c28d85;background:transparent; }
 @media(max-width:1000px) { .wb-material-editor,.wb-ui-inspector { width:220px;flex-basis:220px;padding:10px; }.wb-toolbar { overflow-x:auto; }.wb-toolbar-group { flex:0 0 auto; } }
 @media(max-width:800px) { .wb-ui-body { grid-template-columns:minmax(0,1fr) 205px; }.wb-audio-clip { grid-template-columns:1fr; }.wb-audio-clip audio { grid-column:1; } }
+
+.wb-ui-image-content { width:100%;height:100%;display:block;object-fit:contain;pointer-events:none; }
+.wb-ui-inspector input[type="file"] { width:100%;max-width:100%;color:#9eafb4;font-size:8px; }
+
+.studio-inspector-hidden { display: none !important; }
