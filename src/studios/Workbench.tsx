@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction, PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -10,6 +10,8 @@ import {
   Trash2, Type, Upload, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./workbench.css";
+import ModelStudio, { readModelAssets } from "./ModelStudio";
+import type { ModelAsset, ModelCommand } from "./ModelStudio";
 
 export type WorkbenchWorkspace = "Scene" | "Model" | "Materials" | "Animation" | "UI" | "Logic" | "Audio";
 type Vec3 = [number, number, number];
@@ -85,11 +87,12 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
   onStatus?: (message: string) => void;
   selectedObjectName?: string;
   onSelectionChange?: (name: string) => void;
-  onSceneObjectsChange?: (items: SceneTreeItem[]) => void;
+  onSceneObjectsChange?: (items: SceneTreeItem[], target: "Scene" | "Model") => void;
   workbenchCommand?: WorkbenchCommand | null;
   onWorkbenchCommandApplied?: (id: string) => void;
 }) {
   const [objects, setObjects] = useState<SceneObject[]>(() => readStored("objects", initialObjects));
+  const [models, setModels] = useState<ModelAsset[]>(() => readModelAssets());
   const [uiElements, setUIElements] = useState<UIElement[]>(() => readStored("uiElements", initialUI));
   const [keyframes, setKeyframes] = useState<Keyframe[]>(() => readStored("keyframes", initialKeys));
   const [logicNodes, setLogicNodes] = useState<LogicNode[]>(() => readStored("logicNodes", initialNodes));
@@ -100,10 +103,11 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
     catch { onStatus?.("The browser could not save the complete project data"); }
   }, [objects, uiElements, keyframes, logicNodes, logicLinks, materialPrefs, onStatus]);
   useEffect(() => {
-    onSceneObjectsChange?.(objects.map(item => ({ label: item.name, kind: item.kind === "Plane" ? "terrain" : "model" })));
-  }, [objects, onSceneObjectsChange]);
+    if (workspace === "Model") onSceneObjectsChange?.(models.map(item => ({ label: item.name, kind: "model" })), "Model");
+    else if (workspace === "Scene") onSceneObjectsChange?.(objects.map(item => ({ label: item.name, kind: item.kind === "Plane" ? "terrain" : "model" })), "Scene");
+  }, [workspace, objects, models, onSceneObjectsChange]);
   useEffect(() => {
-    if (!workbenchCommand || !(workspace === "Scene" || workspace === "Model")) return;
+    if (!workbenchCommand || workspace !== "Scene") return;
     const selected = new Set(workbenchCommand.names);
     if (workbenchCommand.type === "delete") {
       setObjects(current => current.filter(item => item.id === "ground" || !selected.has(item.name)));
@@ -142,8 +146,11 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
     }
     onWorkbenchCommandApplied?.(workbenchCommand.id);
   }, [workbenchCommand, workspace, objects, setObjects, onWorkbenchCommandApplied]);
+  const modelCommand = workspace === "Model" ? workbenchCommand as ModelCommand | null : null;
+  const applyModelCommand = useCallback((id: string) => onWorkbenchCommandApplied?.(id), [onWorkbenchCommandApplied]);
 
-  if (workspace === "Scene" || workspace === "Model" || workspace === "Materials") {
+  if (workspace === "Model") return <ModelStudio models={models} setModels={setModels} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} command={modelCommand} onCommandApplied={applyModelCommand} />;
+  if (workspace === "Scene" || workspace === "Materials") {
     return <ThreeStudio workspace={workspace} objects={objects} setObjects={setObjects} materialPrefs={materialPrefs} setMaterialPrefs={setMaterialPrefs} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} />;
   }
   if (workspace === "Animation") return <AnimationStudio keyframes={keyframes} setKeyframes={setKeyframes} onStatus={onStatus} />;
@@ -153,7 +160,7 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
 }
 
 function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMaterialPrefs, selectedObjectName, onSelectionChange, onStatus }: {
-  workspace: "Scene" | "Model" | "Materials";
+  workspace: "Scene" | "Materials";
   objects: SceneObject[];
   setObjects: Dispatch<SetStateAction<SceneObject[]>>;
   materialPrefs: MaterialPrefs;

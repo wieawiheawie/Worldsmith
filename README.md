@@ -47,6 +47,10 @@ npm run preview
 4. Prefer open formats and document the project format.
 5. Keep the application modular, testable and usable on modest development hardware.
 
+## Studio design specification
+
+See [`docs/STUDIO_DESIGN_RESEARCH.md`](docs/STUDIO_DESIGN_RESEARCH.md) for the research-backed layout, interaction and implementation specification for Model, Scene, Materials, Animation, UI, Logic, Audio and Assets studios.
+
 ## Current limitations
 
 - The 3D editor currently edits primitive meshes; full arbitrary topology, UV unwrapping, sculpting, rigging and mesh import/export are not implemented yet.
