@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction, PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
+import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import {
   Box, Circle, Cone, Cylinder, Delete, Dot, Eye, Grid3X3, Layers3, Magnet,
   Move, Plus, RotateCw, Scale, Scissors, Settings2, Square, Trash2,
-  Undo2, Redo2, X
+  Undo2, Redo2, X, Upload, Download
 } from "lucide-react";
 import "./model-studio.css";
 
-export type ModelPrimitive = "Cube" | "Plane" | "Cylinder" | "UV Sphere";
+export type ModelPrimitive = "Cube" | "Plane" | "Cylinder" | "UV Sphere" | "Imported";
 export type MeshData = { vertices: [number, number, number][]; faces: number[][] };
 export type ModelAsset = {
   id: string;
@@ -244,6 +247,63 @@ function subdivideFace(mesh:MeshData,faceIndex:number):MeshData {
   return {vertices:nextVertices,faces:nextFaces};
 }
 
+
+function editableMeshFromGeometry(geometries: THREE.BufferGeometry[]): MeshData {
+  const positionOnly: THREE.BufferGeometry[] = [];
+  for (const source of geometries) {
+    const nonIndexed = source.index ? source.toNonIndexed() : source;
+    const attribute = nonIndexed.getAttribute("position");
+    if (!attribute || attribute.count < 3) continue;
+    const values = new Float32Array(attribute.count * 3);
+    for (let i=0;i<attribute.count;i++) {
+      values[i*3] = attribute.getX(i);
+      values[i*3+1] = attribute.getY(i);
+      values[i*3+2] = attribute.getZ(i);
+    }
+    const simple = new THREE.BufferGeometry();
+    simple.setAttribute("position",new THREE.BufferAttribute(values,3));
+    positionOnly.push(simple);
+    if(nonIndexed!==source)nonIndexed.dispose();
+  }
+  if (!positionOnly.length) throw new Error("The imported file did not contain editable mesh geometry.");
+  const merged = positionOnly.length === 1 ? positionOnly[0].clone() : BufferGeometryUtils.mergeGeometries(positionOnly,false);
+  positionOnly.forEach(geometry=>geometry.dispose());
+  if (!merged) throw new Error("Could not combine the imported mesh parts.");
+  const welded = BufferGeometryUtils.mergeVertices(merged,0.0001);
+  if (welded !== merged) merged.dispose();
+  const position = welded.getAttribute("position");
+  if (!position || position.count < 3) { welded.dispose(); throw new Error("The imported model has no usable vertices."); }
+  welded.computeBoundingBox();
+  const center = welded.boundingBox?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3();
+  const vertices: [number,number,number][] = [];
+  for(let i=0;i<position.count;i++) vertices.push([position.getX(i)-center.x,position.getY(i)-center.y,position.getZ(i)-center.z]);
+  const indices = welded.index ? Array.from(welded.index.array) : Array.from({length:position.count},(_,i)=>i);
+  const faces:number[][]=[];
+  for(let i=0;i+2<indices.length;i+=3) faces.push([indices[i],indices[i+1],indices[i+2]]);
+  welded.dispose();
+  if(!faces.length) throw new Error("The imported model did not contain any triangles.");
+  return {vertices,faces};
+}
+function editableMeshFromObject(root: THREE.Object3D): MeshData {
+  root.updateMatrixWorld(true);
+  const geometries: THREE.BufferGeometry[]=[];
+  root.traverse(object=>{
+    if(object instanceof THREE.Mesh) {
+      const geometry=object.geometry.clone();
+      geometry.applyMatrix4(object.matrixWorld);
+      geometries.push(geometry);
+    }
+  });
+  try { return editableMeshFromGeometry(geometries); }
+  finally { geometries.forEach(geometry=>geometry.dispose()); }
+}
+function downloadBlob(filename:string,blob:Blob):void {
+  const url=URL.createObjectURL(blob);
+  const anchor=document.createElement("a");
+  anchor.href=url;anchor.download=filename;anchor.click();
+  window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 export default function ModelStudio({ models, setModels, selectedObjectName, onSelectionChange, onStatus, command, onCommandApplied, onAddToScene }: {
   models: ModelAsset[];
   setModels: Dispatch<SetStateAction<ModelAsset[]>>;
@@ -255,6 +315,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
   onAddToScene?: (model:ModelAsset)=>void;
 }) {
   const hostRef=useRef<HTMLDivElement>(null);
+  const importRef=useRef<HTMLInputElement>(null);
   const rendererRef=useRef<THREE.WebGLRenderer|null>(null);
   const sceneRef=useRef<THREE.Scene|null>(null);
   const cameraRef=useRef<THREE.PerspectiveCamera|null>(null);
@@ -518,6 +579,41 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
   },[editMode,componentMode,selectedVertices,selectedEdges,selectedFaces,selectedId,models,extrudeAmount,insetAmount]);
 
   const updateModel=(id:string,patch:Partial<ModelAsset>)=>setModels(current=>current.map(model=>model.id===id?{...model,...patch}:model));
+  const importGLB = async (file:File) => {
+    try {
+      const loader=new GLTFLoader();
+      const gltf=await loader.parseAsync(await file.arrayBuffer(),"");
+      const mesh=editableMeshFromObject(gltf.scene);
+      const name=file.name.replace(/\.glb$/i,"")||"Imported Model";
+      const asset:ModelAsset={
+        id:uid(),name,primitive:"Imported",mesh,
+        position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],color:"#a6b2b7"
+      };
+      setModels(current=>[...current,asset]);setSelectedId(asset.id);setEditMode(false);
+      setSelectedVertices([]);setSelectedEdges([]);setSelectedFaces([0]);
+      setStatus(name+" imported as editable mesh");onStatus?.(name+" imported");
+    } catch(error) {
+      const message=error instanceof Error?error.message:"Unknown import error";
+      setStatus("GLB import failed: "+message);onStatus?.("GLB import failed");
+    }
+  };
+  const exportGLB = async () => {
+    if(!selected)return;
+    const geometry=createGeometryFromMesh(selected.mesh);
+    const material=new THREE.MeshStandardMaterial({color:selected.color,roughness:0.65,metalness:0.05});
+    const mesh=new THREE.Mesh(geometry,material);
+    mesh.name=selected.name;mesh.position.set(...selected.position);mesh.rotation.set(...selected.rotation);mesh.scale.set(...selected.scale);
+    try {
+      const result=await new GLTFExporter().parseAsync(mesh,{binary:true});
+      if(!(result instanceof ArrayBuffer))throw new Error("Exporter did not return binary GLB data.");
+      downloadBlob(selected.name.replace(/[^a-z0-9-_]+/gi,"_")+".glb",new Blob([result],{type:"model/gltf-binary"}));
+      setStatus("Exported "+selected.name+".glb");onStatus?.("GLB exported");
+    } catch(error) {
+      const message=error instanceof Error?error.message:"Unknown export error";
+      setStatus("GLB export failed: "+message);onStatus?.("GLB export failed");
+    } finally {geometry.dispose();material.dispose();}
+  };
+
   const createPrimitive=(kind:ModelPrimitive)=>{
     const next=createModelAsset(kind,models.filter(m=>m.primitive===kind).length+1);
     next.position=[models.length*1.35,0,0];
@@ -621,7 +717,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
 
   return <div className="wb-model-studio">
     <header className="wm-topbar">
-      <div className="wm-document"><span className="wm-file-icon"><Layers3 size={15}/></span><div><input aria-label="Model name" value={selected?.name??""} placeholder="Untitled mesh" onChange={event=>selected&&updateModel(selected.id,{name:event.target.value})}/><small>MODEL ASSET <span>·</span> {selected?.primitive??"EMPTY"}</small></div></div>
+      <div className="wm-document"><span className="wm-file-icon"><Layers3 size={15}/></span><div><input aria-label="Model name" value={selected?.name??""} placeholder="Untitled mesh" onChange={event=>selected&&updateModel(selected.id,{name:event.target.value})}/><input ref={importRef} type="file" accept=".glb,model/gltf-binary" hidden onChange={event=>{const file=event.target.files?.[0];if(file)void importGLB(file);event.target.value="";}}/><small>MODEL ASSET <span>·</span> {selected?.primitive??"EMPTY"}</small></div></div>
       <div className="wm-top-divider"/>
       <div className="wm-mode-switch"><button className={!editMode?"active":""} onClick={()=>setEditMode(false)}>OBJECT</button><button className={editMode?"active":""} onClick={()=>setEditMode(true)}>EDIT</button><kbd>TAB</kbd></div>
       {editMode&&<div className="wm-component-modes">
@@ -630,6 +726,8 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
         <button className={componentMode==="face"?"active":""} title="Face selection (3)" onClick={()=>{setComponentMode("face");setSelectedVertices([]);setSelectedEdges([]);setSelectedFaces([]);}}><Square size={14}/> Face <kbd>3</kbd></button>
       </div>}
       <div className="wm-top-spacer"/>
+      <button onClick={()=>importRef.current?.click()} title="Import a binary glTF model"><Upload size={14}/> Import GLB</button>
+      <button disabled={!selected} onClick={exportGLB} title="Export selected model as GLB"><Download size={14}/> Export GLB</button>
       <button className={snapEnabled?"active":""} title="Toggle transform snapping" onClick={()=>setSnapEnabled(value=>!value)}><Magnet size={14}/> Snap</button>
       <button title="Toggle grid" className={gridVisible?"active":""} onClick={()=>setGridVisible(value=>!value)}><Grid3X3 size={14}/></button>
       <button title="Frame selected model" onClick={focusSelected}><Eye size={14}/></button>
