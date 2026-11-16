@@ -160,7 +160,7 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
 }
 
 function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMaterialPrefs, selectedObjectName, onSelectionChange, onStatus }: {
-  workspace: "Scene" | "Materials";
+  workspace: "Scene" | "Model" | "Materials";
   objects: SceneObject[];
   setObjects: Dispatch<SetStateAction<SceneObject[]>>;
   materialPrefs: MaterialPrefs;
