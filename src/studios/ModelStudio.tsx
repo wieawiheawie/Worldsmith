@@ -123,7 +123,7 @@ export function modelEdges(mesh: MeshData): Edge[] {
   }
   return edges;
 }
-function geometryFromFaces(mesh: MeshData, selectedFaces: number[] = []): THREE.BufferGeometry {
+export function createGeometryFromMesh(mesh: MeshData, selectedFaces: number[] = []): THREE.BufferGeometry {
   const positions: number[] = [];
   const indices: number[] = [];
   const faceMap: number[] = [];
@@ -244,7 +244,7 @@ function subdivideFace(mesh:MeshData,faceIndex:number):MeshData {
   return {vertices:nextVertices,faces:nextFaces};
 }
 
-export default function ModelStudio({ models, setModels, selectedObjectName, onSelectionChange, onStatus, command, onCommandApplied }: {
+export default function ModelStudio({ models, setModels, selectedObjectName, onSelectionChange, onStatus, command, onCommandApplied, onAddToScene }: {
   models: ModelAsset[];
   setModels: Dispatch<SetStateAction<ModelAsset[]>>;
   selectedObjectName?: string;
@@ -252,6 +252,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
   onStatus?: (message:string)=>void;
   command?: ModelCommand|null;
   onCommandApplied?: (id:string)=>void;
+  onAddToScene?: (model:ModelAsset)=>void;
 }) {
   const hostRef=useRef<HTMLDivElement>(null);
   const rendererRef=useRef<THREE.WebGLRenderer|null>(null);
@@ -280,7 +281,8 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
   const [status,setStatus]=useState("Object mode · Select a mesh, then press Tab to edit its topology");
   const [snapEnabled,setSnapEnabled]=useState(false);
   const [snapStep,setSnapStep]=useState(0.25);
-  const [showStatistics,setShowStatistics]=useState(true);
+  const [meshHistory,setMeshHistory]=useState<Record<string,MeshData[]>>({});
+  const [meshFuture,setMeshFuture]=useState<Record<string,MeshData[]>>({});
   const selected=models.find(model=>model.id===selectedId)??models[0];
   modelsRef.current=models;
   editRef.current=editMode;
@@ -440,7 +442,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
     }
     const map=new Map<string,THREE.Mesh>();
     for(const model of models){
-      const geometry=geometryFromFaces(model.mesh);
+      const geometry=createGeometryFromMesh(model.mesh);
       const material=new THREE.MeshStandardMaterial({color:model.color,roughness:0.62,metalness:0.08,flatShading:true,side:THREE.DoubleSide,wireframe:wireframe&&!editMode});
       const mesh=new THREE.Mesh(geometry,material);
       mesh.name=model.name;mesh.userData.modelId=model.id;
@@ -460,7 +462,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
           const active=group.children[group.children.length-1];active.position.copy(mesh.position);active.rotation.copy(mesh.rotation);active.scale.copy(mesh.scale);
         }
         if(selectedFaces.length){
-          const overlay=new THREE.Mesh(geometryFromFaces({vertices:model.mesh.vertices,faces:selectedFaces.map(i=>model.mesh.faces[i]).filter(Boolean)}),new THREE.MeshBasicMaterial({color:0xffa84e,transparent:true,opacity:0.33,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1}));
+          const overlay=new THREE.Mesh(createGeometryFromMesh({vertices:model.mesh.vertices,faces:selectedFaces.map(i=>model.mesh.faces[i]).filter(Boolean)}),new THREE.MeshBasicMaterial({color:0xffa84e,transparent:true,opacity:0.33,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1}));
           overlay.position.copy(mesh.position);overlay.rotation.copy(mesh.rotation);overlay.scale.copy(mesh.scale);overlay.renderOrder=3;group.add(overlay);
         }
         if(selectedEdges.length){
@@ -472,7 +474,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
     }
     meshMapRef.current=map;
     const active=map.get(selectedId);
-    if(active&&!editMode){transform.attach(active);transform.setMode(transformMode);transform.enabled=true;transform.setTranslationSnap(snapEnabled?snapStep:null);}
+    if(active&&!editMode){transform.attach(active);transform.setMode(transformMode);transform.enabled=true;transform.setTranslationSnap(snapEnabled?snapStep:null);transform.setRotationSnap(snapEnabled?Math.PI/12:null);transform.setScaleSnap(snapEnabled?0.1:null);}
     else{transform.detach();transform.enabled=false;}
   },[models,selectedId,editMode,componentMode,selectedVertices,selectedEdges,selectedFaces,transformMode,wireframe,snapEnabled,snapStep]);
 
@@ -491,10 +493,29 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
       if(event.key.toLowerCase()==="g"&&!event.ctrlKey&&!event.metaKey){setTransformMode("translate");setActiveTool("Move");}
       if(event.key.toLowerCase()==="r"&&!event.ctrlKey&&!event.metaKey){setTransformMode("rotate");setActiveTool("Rotate");}
       if(event.key.toLowerCase()==="s"&&!event.ctrlKey&&!event.metaKey){setTransformMode("scale");setActiveTool("Scale");}
+      if(editMode&&componentMode==="face"&&(event.key.toLowerCase()==="e"||event.key.toLowerCase()==="i")){
+        event.preventDefault();
+        const active=models.find(model=>model.id===selectedId);
+        const faceIndex=selectedFaces[0];
+        if(active&&faceIndex!==undefined){
+          if(event.key.toLowerCase()==="e"){
+            setModels(current=>current.map(model=>model.id===active.id?{...model,mesh:extrudeFace(model.mesh,faceIndex,extrudeAmount)}:model));
+            setMeshHistory(current=>({...current,[active.id]:[...(current[active.id]??[]),{vertices:active.mesh.vertices.map(v=>[...v] as [number,number,number]),faces:active.mesh.faces.map(f=>[...f])}].slice(-50)}));
+            setMeshFuture(current=>({...current,[active.id]:[]}));
+            setSelectedFaces([faceIndex]);setStatus("Extruded selected face");
+          }else{
+            const faceSize=active.mesh.faces[faceIndex]?.length??0;
+            setModels(current=>current.map(model=>model.id===active.id?{...model,mesh:insetFace(model.mesh,faceIndex,insetAmount)}:model));
+            setMeshHistory(current=>({...current,[active.id]:[...(current[active.id]??[]),{vertices:active.mesh.vertices.map(v=>[...v] as [number,number,number]),faces:active.mesh.faces.map(f=>[...f])}].slice(-50)}));
+            setMeshFuture(current=>({...current,[active.id]:[]}));
+            setSelectedFaces([faceIndex+faceSize]);setStatus("Inset selected face");
+          }
+        }
+      }
       if(event.key==="Delete"&&editMode)deleteComponents();
     };
     window.addEventListener("keydown",keydown);return()=>window.removeEventListener("keydown",keydown);
-  },[editMode,componentMode,selectedVertices,selectedEdges,selectedFaces,selectedId,models]);
+  },[editMode,componentMode,selectedVertices,selectedEdges,selectedFaces,selectedId,models,extrudeAmount,insetAmount]);
 
   const updateModel=(id:string,patch:Partial<ModelAsset>)=>setModels(current=>current.map(model=>model.id===id?{...model,...patch}:model));
   const createPrimitive=(kind:ModelPrimitive)=>{
@@ -507,9 +528,34 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
   const currentMesh=selected?.mesh;
   const currentEdges=useMemo(()=>currentMesh?modelEdges(currentMesh):[],[currentMesh]);
   const activeVertexIndices=useMemo(()=>currentMesh?selectedVerticesForDisplay(currentMesh,componentMode,selectedVertices,selectedEdges,selectedFaces):[],[currentMesh,componentMode,selectedVertices,selectedEdges,selectedFaces]);
+  const cloneMesh=(mesh:MeshData):MeshData=>({vertices:mesh.vertices.map(v=>[...v] as [number,number,number]),faces:mesh.faces.map(f=>[...f])});
   const updateMesh=(mesh:MeshData,message:string)=>{
     if(!selected)return;
+    setMeshHistory(current=>({...current,[selected.id]:[...(current[selected.id]??[]),cloneMesh(selected.mesh)].slice(-50)}));
+    setMeshFuture(current=>({...current,[selected.id]:[]}));
     updateModel(selected.id,{mesh});setStatus(message);onStatus?.(message);
+  };
+  const undoMesh=()=>{
+    if(!selected)return;
+    const history=meshHistory[selected.id]??[];
+    const previous=history[history.length-1];
+    if(!previous)return;
+    setMeshHistory(current=>({...current,[selected.id]:history.slice(0,-1)}));
+    setMeshFuture(current=>({...current,[selected.id]:[...(current[selected.id]??[]),cloneMesh(selected.mesh)]}));
+    updateModel(selected.id,{mesh:cloneMesh(previous)});
+    setSelectedVertices([]);setSelectedEdges([]);setSelectedFaces([]);
+    setStatus("Undid mesh edit");
+  };
+  const redoMesh=()=>{
+    if(!selected)return;
+    const future=meshFuture[selected.id]??[];
+    const next=future[future.length-1];
+    if(!next)return;
+    setMeshFuture(current=>({...current,[selected.id]:future.slice(0,-1)}));
+    setMeshHistory(current=>({...current,[selected.id]:[...(current[selected.id]??[]),cloneMesh(selected.mesh)].slice(-50)}));
+    updateModel(selected.id,{mesh:cloneMesh(next)});
+    setSelectedVertices([]);setSelectedEdges([]);setSelectedFaces([]);
+    setStatus("Redid mesh edit");
   };
   const extrude=()=>{
     if(!selected||selectedFaces.length===0){setStatus("Select a face before extruding");return;}
@@ -605,13 +651,14 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
         <button className={transformMode==="scale"?"selected":""} disabled={editMode} onClick={()=>setMode("scale")}><Scale size={15}/> Scale <kbd>S</kbd></button>
         <div className="wm-shelf-divider"/>
         <div className="wm-shelf-heading">MESH EDIT</div>
-        <button disabled={!editMode||componentMode!=="face"} onClick={extrude}><Plus size={15}/> Extrude face <kbd>E</kbd></button>
-        <button disabled={!editMode||componentMode!=="face"} onClick={inset}><Square size={15}/> Inset face <kbd>I</kbd></button>
-        <button disabled={!editMode||componentMode!=="face"} onClick={subdivide}><Scissors size={15}/> Subdivide</button>
+        <button disabled={!editMode||componentMode!=="face"||selectedFaces.length!==1} onClick={extrude}><Plus size={15}/> Extrude face <kbd>E</kbd></button>
+        <button disabled={!editMode||componentMode!=="face"||selectedFaces.length!==1} onClick={inset}><Square size={15}/> Inset face <kbd>I</kbd></button>
+        <button disabled={!editMode||componentMode!=="face"||selectedFaces.length!==1} onClick={subdivide}><Scissors size={15}/> Subdivide</button>
         <button disabled={!editMode||activeVertexIndices.length===0} onClick={deleteComponents}><Trash2 size={15}/> Delete elements</button>
         <div className="wm-shelf-divider"/>
         <div className="wm-shelf-heading">OBJECT</div>
         <button disabled={!selected} onClick={duplicateModel}><Plus size={15}/> Duplicate</button>
+        <button disabled={!selected} onClick={()=>selected&&onAddToScene?.(selected)}><Plus size={15}/> Add to Scene</button>
         <button disabled={!selected} className="danger" onClick={deleteModel}><Trash2 size={15}/> Delete model</button>
       </aside>
       <section className="wm-viewport-wrap">
@@ -647,7 +694,7 @@ export default function ModelStudio({ models, setModels, selectedObjectName, onS
     </div>
     <footer className="wm-statusbar">
       <span>{models.length} mesh object(s)</span><span>{status}</span><span>{editMode?"Tab · Object Mode": "Tab · Edit Mode"}</span>
-      <div><button title="Undo is not available yet" disabled><Undo2 size={14}/></button><button title="Redo is not available yet" disabled><Redo2 size={14}/></button></div>
+      <div><button title="Undo last mesh operation" onClick={undoMesh} disabled={!selected||(meshHistory[selected.id]?.length??0)===0}><Undo2 size={14}/></button><button title="Redo mesh operation" onClick={redoMesh} disabled={!selected||(meshFuture[selected.id]?.length??0)===0}><Redo2 size={14}/></button></div>
     </footer>
   </div>;
 }

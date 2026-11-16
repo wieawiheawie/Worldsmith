@@ -10,13 +10,13 @@ import {
   Trash2, Type, Upload, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./workbench.css";
-import ModelStudio, { readModelAssets } from "./ModelStudio";
+import ModelStudio, { createGeometryFromMesh, readModelAssets } from "./ModelStudio";
 import type { ModelAsset, ModelCommand } from "./ModelStudio";
 
 export type WorkbenchWorkspace = "Scene" | "Model" | "Materials" | "Animation" | "UI" | "Logic" | "Audio";
 type Vec3 = [number, number, number];
-type ObjectKind = "Cube" | "Sphere" | "Cylinder" | "Plane" | "Torus";
-type SceneObject = { id: string; name: string; kind: ObjectKind; position: Vec3; rotation: Vec3; scale: Vec3; color: string; segments: number };
+type ObjectKind = "Cube" | "Sphere" | "Cylinder" | "Plane" | "Torus" | "Model";
+type SceneObject = { id: string; name: string; kind: ObjectKind; modelAssetId?: string; position: Vec3; rotation: Vec3; scale: Vec3; color: string; segments: number };
 type Keyframe = { id: string; time: number; x: number; y: number; rotation: number; scale: number };
 type UIElement = { id: string; name: string; kind: "Text" | "Button" | "Panel" | "Image" | "Bar"; text: string; x: number; y: number; w: number; h: number; color: string; textColor: string; fontSize: number; imageData?: string };
 type LogicNode = { id: string; kind: "Event" | "Input" | "Math" | "Branch" | "Set" | "Print"; title: string; x: number; y: number };
@@ -82,7 +82,7 @@ function makeObject(kind: ObjectKind, index: number): SceneObject {
   };
 }
 
-export default function CreativeWorkbench({ workspace, onStatus, selectedObjectName, onSelectionChange, onSceneObjectsChange, workbenchCommand, onWorkbenchCommandApplied }: {
+export default function CreativeWorkbench({ workspace, onStatus, selectedObjectName, onSelectionChange, onSceneObjectsChange, workbenchCommand, onWorkbenchCommandApplied, onSwitchToScene }: {
   workspace: WorkbenchWorkspace;
   onStatus?: (message: string) => void;
   selectedObjectName?: string;
@@ -90,6 +90,7 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
   onSceneObjectsChange?: (items: SceneTreeItem[], target: "Scene" | "Model") => void;
   workbenchCommand?: WorkbenchCommand | null;
   onWorkbenchCommandApplied?: (id: string) => void;
+  onSwitchToScene?: () => void;
 }) {
   const [objects, setObjects] = useState<SceneObject[]>(() => readStored("objects", initialObjects));
   const [models, setModels] = useState<ModelAsset[]>(() => readModelAssets());
@@ -148,10 +149,27 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
   }, [workbenchCommand, workspace, objects, setObjects, onWorkbenchCommandApplied]);
   const modelCommand = workspace === "Model" ? workbenchCommand as ModelCommand | null : null;
   const applyModelCommand = useCallback((id: string) => onWorkbenchCommandApplied?.(id), [onWorkbenchCommandApplied]);
+  const addModelToScene = useCallback((asset: ModelAsset) => {
+    setObjects(current => {
+      let name = asset.name;
+      let suffix = 2;
+      const existing = new Set(current.map(item => item.name));
+      while (existing.has(name)) name = asset.name + " " + suffix++;
+      return [...current, {
+        id: uid(), name, kind: "Model", modelAssetId: asset.id,
+        position: [asset.position[0], asset.position[1], asset.position[2]] as Vec3,
+        rotation: [asset.rotation[0], asset.rotation[1], asset.rotation[2]] as Vec3,
+        scale: [asset.scale[0], asset.scale[1], asset.scale[2]] as Vec3,
+        color: asset.color, segments: 1
+      }];
+    });
+    onStatus?.(asset.name + " added to the scene");
+    onSwitchToScene?.();
+  }, [onStatus, onSwitchToScene]);
 
-  if (workspace === "Model") return <ModelStudio models={models} setModels={setModels} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} command={modelCommand} onCommandApplied={applyModelCommand} />;
+  if (workspace === "Model") return <ModelStudio models={models} setModels={setModels} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} command={modelCommand} onCommandApplied={applyModelCommand} onAddToScene={addModelToScene} />;
   if (workspace === "Scene" || workspace === "Materials") {
-    return <ThreeStudio workspace={workspace} objects={objects} setObjects={setObjects} materialPrefs={materialPrefs} setMaterialPrefs={setMaterialPrefs} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} />;
+    return <ThreeStudio workspace={workspace} objects={objects} setObjects={setObjects} modelAssets={models} materialPrefs={materialPrefs} setMaterialPrefs={setMaterialPrefs} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} />;
   }
   if (workspace === "Animation") return <AnimationStudio keyframes={keyframes} setKeyframes={setKeyframes} onStatus={onStatus} />;
   if (workspace === "UI") return <UIStudio elements={uiElements} setElements={setUIElements} onStatus={onStatus} />;
@@ -159,10 +177,11 @@ export default function CreativeWorkbench({ workspace, onStatus, selectedObjectN
   return <AudioStudio onStatus={onStatus} />;
 }
 
-function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMaterialPrefs, selectedObjectName, onSelectionChange, onStatus }: {
+function ThreeStudio({ workspace, objects, setObjects, modelAssets, materialPrefs, setMaterialPrefs, selectedObjectName, onSelectionChange, onStatus }: {
   workspace: "Scene" | "Model" | "Materials";
   objects: SceneObject[];
   setObjects: Dispatch<SetStateAction<SceneObject[]>>;
+  modelAssets: ModelAsset[];
   materialPrefs: MaterialPrefs;
   setMaterialPrefs: Dispatch<SetStateAction<MaterialPrefs>>;
   selectedObjectName?: string;
@@ -345,7 +364,11 @@ function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMateria
     objects.forEach(item => {
       const segments = Math.max(1, Math.min(32, item.segments || 2));
       let geometry: THREE.BufferGeometry;
-      if (item.kind === "Sphere") geometry = new THREE.SphereGeometry(0.55, Math.max(8,segments*8), Math.max(6,segments*5));
+      if (item.kind === "Model") {
+        const asset = modelAssets.find(model => model.id === item.modelAssetId);
+        geometry = asset ? createGeometryFromMesh(asset.mesh) : new THREE.BoxGeometry(1,1,1);
+      }
+      else if (item.kind === "Sphere") geometry = new THREE.SphereGeometry(0.55, Math.max(8,segments*8), Math.max(6,segments*5));
       else if (item.kind === "Cylinder") geometry = new THREE.CylinderGeometry(0.48,0.48,1,Math.max(6,segments*6),segments);
       else if (item.kind === "Plane") geometry = new THREE.PlaneGeometry(1,1,segments,segments);
       else if (item.kind === "Torus") geometry = new THREE.TorusGeometry(0.42,0.16,Math.max(4,segments*2),Math.max(12,segments*8));
@@ -374,7 +397,7 @@ function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMateria
     if (selected && selected.userData.objectId !== "ground") transform.attach(selected);
     transform.setMode(tool);
     transform.enabled = workspace !== "Materials";
-  }, [objects, selectedId, workspace, tool, roughness, metalness, materialColor, flatShading]);
+  }, [objects, modelAssets, selectedId, workspace, tool, roughness, metalness, materialColor, flatShading]);
 
   useEffect(() => {
     const grid = sceneRef.current?.children.find(child => child instanceof THREE.GridHelper) as THREE.GridHelper | undefined;
