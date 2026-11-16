@@ -5,6 +5,14 @@
 
 This document is a product and interaction specification, not a claim that Worldsmith already implements every feature described here. The immediate objective is to make each workspace a real editor for its own kind of data, while keeping one shared project and asset model underneath.
 
+## Current implementation checkpoint — 16 November 2026
+
+The first implementation pass now includes a dedicated Model Studio, separate from Scene Studio. It has editable polygon mesh data (vertices and faces), component selection modes, object transforms, primitive creation, selected-face extrusion/inset/subdivision, component deletion, a per-model mesh-operation undo/redo history, mesh statistics, snap controls, and browser-local persistence. GLB files can be imported into editable triangle topology and exported again. Model assets can be instanced into Scene Studio by asset ID so that the scene renders the current source mesh.
+
+This is a foundation, not a finished DCC modeller. Imported GLB geometry is flattened into a single editable mesh and triangulated; source materials, UVs, rigs, animation and multi-object hierarchy are not preserved by this first importer/exporter. The editor does not yet have bevel, loop cut, knife, merge/weld, UV unwrap, sculpting, modifier stacks or non-destructive mesh operations. Undo/redo currently covers mesh edits, not every object/asset operation.
+
+The broader workspace recommendations below remain the intended design direction. The next implementation should replace each remaining demonstration-level studio with a task-specific editor, then consolidate the browser-local records into a versioned shared project database.
+
 ## 1. Core product direction
 
 Worldsmith should feel like one professional desktop creative suite running in a browser. It should not feel like a landing page containing a set of themed demo panels.

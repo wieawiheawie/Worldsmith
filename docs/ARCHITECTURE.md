@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-The current milestone contains working first-pass studios: a Three.js primitive scene/model editor, PBR material controls with canvas texture painting, keyframe transform animation, draggable UI/HUD elements, a connected visual logic graph and local audio preview. It is still a foundation—not a complete engine, modeller, animator, visual scripting VM or runtime.
+The current milestone contains working first-pass studios: a Three.js scene editor, a separate polygon-mesh Model Studio with Object/Edit modes and GLB import/export, PBR material controls with canvas texture painting, keyframe transform animation, draggable UI/HUD elements, a connected visual logic graph and local audio preview. Models can be added to scenes by asset reference. It is still a foundation—not a complete engine, modeller, animator, visual scripting VM or runtime.
 
 ## Architectural boundaries
 

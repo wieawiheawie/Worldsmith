@@ -53,12 +53,13 @@ See [`docs/STUDIO_DESIGN_RESEARCH.md`](docs/STUDIO_DESIGN_RESEARCH.md) for the r
 
 ## Current limitations
 
-- The 3D editor currently edits primitive meshes; full arbitrary topology, UV unwrapping, sculpting, rigging and mesh import/export are not implemented yet.
+- Model Studio now has an editable polygon mesh document with vertex/edge/face selection, primitive creation, transforms, face extrude/inset/subdivide, component deletion, mesh-operation undo/redo, GLB import/export and an Add to Scene workflow. Imported GLB meshes are flattened to triangle faces; arbitrary multi-object editing, bevel, loop cut, knife, UV editing, sculpting, rigging and preservation of source material data are not implemented yet.
 - Material painting is a single shared UV texture canvas, not a layered texture-painting system.
 - Animation currently previews one simple transform track using linear interpolation; skeletal animation and animation state machines are not implemented.
 - UI Studio edits a local HUD canvas; it is not yet connected to a game runtime or responsive layout export.
 - Logic graph execution is a small demonstrator for connected nodes, not yet a general visual scripting VM.
 - Audio files are previewed locally and are not yet embedded in the saved project or exported game.
+- Model assets and scene documents currently persist in separate browser local-storage records; the versioned project bundle and asset database are still future work.
 - The old generic inspector remains available for the asset-library workspace; the functional studios expose their own controls.
 
 ## Planned architecture
