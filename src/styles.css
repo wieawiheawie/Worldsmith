@@ -285,3 +285,16 @@ body.is-resizing:has(.resize-handle.horizontal:active) { cursor: row-resize; }
 .shortcut-row { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 5px 8px; border-bottom: 1px solid #2b333d; color: #aab7c0; font-size: 10px; }
 .shortcut-row:last-child { border-bottom: 0; }
 .shortcut-row kbd { padding: 3px 6px; border: 1px solid #3a4650; border-radius: 4px; color: #b9dcd5; background: #242e36; font: 8px var(--mono); white-space: nowrap; }
+
+
+/* Real inspector editing and asset selection states. */
+.triple-input input:focus, input.value-control:focus { border-color: #6cbeb3; outline: 1px solid rgba(108,190,179,.35); }
+input.value-control { width: 100%; min-width: 0; color: #bfcad0; font: 9px var(--mono); }
+.tag-row button { padding: 4px 7px; border: 1px solid #3b4c4b; border-radius: 4px; color: #a1b8b4; background: #263433; font-size: 8px; cursor: pointer; }
+.tag-row button:hover { color: #e0f3ee; border-color: #65978e; }
+.component-card > div { min-width: 0; }
+.component-remove { width: 22px; height: 21px; display: grid; place-items: center; margin-left: auto; border-radius: 4px; color: #83939e; background: transparent; }
+.component-remove:hover:not(:disabled) { color: #f0aaa0; background: rgba(170,80,70,.13); }
+.component-remove:disabled { opacity: .25; cursor: not-allowed; }
+.dock-asset.selected { border-color: #5b9b91; background: #263b3c; }
+.dock-asset.selected strong { color: #d7f0e9; }
