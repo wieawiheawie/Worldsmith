@@ -298,3 +298,6 @@ input.value-control { width: 100%; min-width: 0; color: #bfcad0; font: 9px var(-
 .component-remove:disabled { opacity: .25; cursor: not-allowed; }
 .dock-asset.selected { border-color: #5b9b91; background: #263b3c; }
 .dock-asset.selected strong { color: #d7f0e9; }
+
+
+.stage-zoom-layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transform-origin: center; transition: transform 120ms ease; }
