@@ -19,6 +19,20 @@ type Keyframe = { id: string; time: number; x: number; y: number; rotation: numb
 type UIElement = { id: string; name: string; kind: "Text" | "Button" | "Panel" | "Image" | "Bar"; text: string; x: number; y: number; w: number; h: number; color: string; textColor: string; fontSize: number };
 type LogicNode = { id: string; kind: "Event" | "Input" | "Math" | "Branch" | "Set" | "Print"; title: string; x: number; y: number };
 type LogicLink = { id: string; from: string; to: string };
+type MaterialPrefs = {
+  materialColor: string;
+  roughness: number;
+  metalness: number;
+  flatShading: boolean;
+  brushColor: string;
+  brushSize: number;
+};
+const DEFAULT_MATERIAL_PREFS: MaterialPrefs = {
+  materialColor: "#a2b9a8", roughness: 0.62, metalness: 0.12,
+  flatShading: true, brushColor: "#d7a46f", brushSize: 14
+};
+type SceneTreeItem = { label: string; kind: string };
+type WorkbenchCommand = { id: string; type: "delete" | "duplicate" | "move"; names: string[]; direction?: -1 | 1 };
 const STORAGE = "worldsmith-studio-workbench-v1";
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : "ws-" + Date.now() + "-" + Math.random().toString(16).slice(2));
 const initialObjects: SceneObject[] = [
@@ -66,19 +80,71 @@ function makeObject(kind: ObjectKind, index: number): SceneObject {
   };
 }
 
-export default function CreativeWorkbench({ workspace, onStatus }: { workspace: WorkbenchWorkspace; onStatus?: (message: string) => void }) {
+export default function CreativeWorkbench({ workspace, onStatus, selectedObjectName, onSelectionChange, onSceneObjectsChange, workbenchCommand, onWorkbenchCommandApplied }: {
+  workspace: WorkbenchWorkspace;
+  onStatus?: (message: string) => void;
+  selectedObjectName?: string;
+  onSelectionChange?: (name: string) => void;
+  onSceneObjectsChange?: (items: SceneTreeItem[]) => void;
+  workbenchCommand?: WorkbenchCommand | null;
+  onWorkbenchCommandApplied?: (id: string) => void;
+}) {
   const [objects, setObjects] = useState<SceneObject[]>(() => readStored("objects", initialObjects));
   const [uiElements, setUIElements] = useState<UIElement[]>(() => readStored("uiElements", initialUI));
   const [keyframes, setKeyframes] = useState<Keyframe[]>(() => readStored("keyframes", initialKeys));
   const [logicNodes, setLogicNodes] = useState<LogicNode[]>(() => readStored("logicNodes", initialNodes));
   const [logicLinks, setLogicLinks] = useState<LogicLink[]>(() => readStored("logicLinks", initialLinks));
+  const [materialPrefs, setMaterialPrefs] = useState<MaterialPrefs>(() => readStored("materialPrefs", DEFAULT_MATERIAL_PREFS));
   useEffect(() => {
-    try { window.localStorage.setItem(STORAGE, JSON.stringify({ objects, uiElements, keyframes, logicNodes, logicLinks })); }
+    try { window.localStorage.setItem(STORAGE, JSON.stringify({ objects, uiElements, keyframes, logicNodes, logicLinks, materialPrefs })); }
     catch { onStatus?.("The browser could not save the complete project data"); }
-  }, [objects, uiElements, keyframes, logicNodes, logicLinks, onStatus]);
+  }, [objects, uiElements, keyframes, logicNodes, logicLinks, materialPrefs, onStatus]);
+  useEffect(() => {
+    onSceneObjectsChange?.(objects.map(item => ({ label: item.name, kind: item.kind === "Plane" ? "terrain" : "model" })));
+  }, [objects, onSceneObjectsChange]);
+  useEffect(() => {
+    if (!workbenchCommand || !(workspace === "Scene" || workspace === "Model")) return;
+    const selected = new Set(workbenchCommand.names);
+    if (workbenchCommand.type === "delete") {
+      setObjects(current => current.filter(item => item.id === "ground" || !selected.has(item.name)));
+    } else if (workbenchCommand.type === "duplicate") {
+      const source = objects.filter(item => selected.has(item.name));
+      const names = new Set(objects.map(item => item.name));
+      const copies = source.map(item => {
+        let name = item.name + " Copy";
+        let suffix = 2;
+        while (names.has(name)) name = item.name + " Copy " + suffix++;
+        names.add(name);
+        return { ...item, id: uid(), name, position: [item.position[0] + 1.1, item.position[1], item.position[2] + 0.45] as Vec3 };
+      });
+      if (copies.length) setObjects(current => [...current, ...copies]);
+    } else if (workbenchCommand.type === "move") {
+      setObjects(current => {
+        const next = [...current];
+        let moved = false;
+        if ((workbenchCommand.direction ?? 1) < 0) {
+          for (let i = 1; i < next.length; i++) {
+            if (selected.has(next[i].name) && !selected.has(next[i - 1].name)) {
+              [next[i - 1], next[i]] = [next[i], next[i - 1]];
+              moved = true;
+            }
+          }
+        } else {
+          for (let i = next.length - 2; i >= 0; i--) {
+            if (selected.has(next[i].name) && !selected.has(next[i + 1].name)) {
+              [next[i], next[i + 1]] = [next[i + 1], next[i]];
+              moved = true;
+            }
+          }
+        }
+        return moved ? next : current;
+      });
+    }
+    onWorkbenchCommandApplied?.(workbenchCommand.id);
+  }, [workbenchCommand, workspace, objects, setObjects, onWorkbenchCommandApplied]);
 
   if (workspace === "Scene" || workspace === "Model" || workspace === "Materials") {
-    return <ThreeStudio workspace={workspace} objects={objects} setObjects={setObjects} onStatus={onStatus} />;
+    return <ThreeStudio workspace={workspace} objects={objects} setObjects={setObjects} materialPrefs={materialPrefs} setMaterialPrefs={setMaterialPrefs} selectedObjectName={selectedObjectName} onSelectionChange={onSelectionChange} onStatus={onStatus} />;
   }
   if (workspace === "Animation") return <AnimationStudio keyframes={keyframes} setKeyframes={setKeyframes} onStatus={onStatus} />;
   if (workspace === "UI") return <UIStudio elements={uiElements} setElements={setUIElements} onStatus={onStatus} />;
@@ -86,10 +152,14 @@ export default function CreativeWorkbench({ workspace, onStatus }: { workspace: 
   return <AudioStudio onStatus={onStatus} />;
 }
 
-function ThreeStudio({ workspace, objects, setObjects, onStatus }: {
+function ThreeStudio({ workspace, objects, setObjects, materialPrefs, setMaterialPrefs, selectedObjectName, onSelectionChange, onStatus }: {
   workspace: "Scene" | "Model" | "Materials";
   objects: SceneObject[];
   setObjects: Dispatch<SetStateAction<SceneObject[]>>;
+  materialPrefs: MaterialPrefs;
+  setMaterialPrefs: Dispatch<SetStateAction<MaterialPrefs>>;
+  selectedObjectName?: string;
+  onSelectionChange?: (name: string) => void;
   onStatus?: (message: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -104,12 +174,8 @@ function ThreeStudio({ workspace, objects, setObjects, onStatus }: {
   const orbitRef = useRef<OrbitControls | null>(null);
   const [selectedId, setSelectedId] = useState("cube");
   const [tool, setTool] = useState<"translate" | "rotate" | "scale">("translate");
-  const [brushColor, setBrushColor] = useState("#d7a46f");
-  const [brushSize, setBrushSize] = useState(14);
-  const [materialColor, setMaterialColor] = useState("#a2b9a8");
-  const [roughness, setRoughness] = useState(0.62);
-  const [metalness, setMetalness] = useState(0.12);
-  const [flatShading, setFlatShading] = useState(true);
+  const { brushColor, brushSize, materialColor, roughness, metalness, flatShading } = materialPrefs;
+  const updateMaterialPrefs = (patch: Partial<MaterialPrefs>) => setMaterialPrefs(current => ({ ...current, ...patch }));
   const [gridVisible, setGridVisible] = useState(true);
   const [painted, setPainted] = useState(false);
   const [notice, setNotice] = useState("Drag to orbit · Scroll to zoom · Select a mesh to edit");
@@ -117,6 +183,13 @@ function ThreeStudio({ workspace, objects, setObjects, onStatus }: {
   const paintDown = useRef(false);
   const lastPaint = useRef<{x:number;y:number}|null>(null);
   const selectedObject = objects.find(item => item.id === selectedId) ?? objects[0];
+  useEffect(() => {
+    const match = objects.find(item => item.name === selectedObjectName);
+    if (match && match.id !== selectedId) setSelectedId(match.id);
+  }, [selectedObjectName, objects, selectedId]);
+  useEffect(() => {
+    if (selectedObject) onSelectionChange?.(selectedObject.name);
+  }, [selectedObject?.id, selectedObject?.name, onSelectionChange]);
 
   useEffect(() => {
     const canvas = paintCanvasRef.current;
@@ -131,6 +204,17 @@ function ThreeStudio({ workspace, objects, setObjects, onStatus }: {
     for (let y = 0; y <= canvas.height; y += 32) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    const savedTexture = window.localStorage.getItem(STORAGE + "-paint");
+    if (savedTexture) {
+      const image = new window.Image();
+      image.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        texture.needsUpdate = true;
+        setPainted(true);
+      };
+      image.src = savedTexture;
+    }
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     paintTextureRef.current = texture;
     return () => { texture.dispose(); paintTextureRef.current = null; };
@@ -362,18 +446,18 @@ function ThreeStudio({ workspace, objects, setObjects, onStatus }: {
         <div className="wb-viewport" ref={hostRef}/>
         <div className="wb-viewport-hint"><span className="wb-live-dot"/> REAL-TIME WEBGL VIEWPORT <span>·</span> {workspace === "Model" ? "MESH EDIT" : workspace === "Materials" ? "MATERIAL PREVIEW" : "SCENE EDIT"}</div>
         {workspace !== "Materials" && <div className="wb-object-strip">{objects.map(item => <button key={item.id} className={selectedId === item.id ? "active" : ""} onClick={() => setSelectedId(item.id)}>{item.name}</button>)}</div>}
-        {workspace === "Model" && selectedObject && selectedObject.id !== "ground" && <div className="wb-mesh-panel"><span>SUBDIVISION</span><input type="range" min="1" max="12" value={selectedObject.segments} onChange={event => updateSelected({segments:Number(event.target.value)})}/><strong>{selectedObject.segments}</strong><button onClick={() => setFlatShading(value => !value)} className={flatShading ? "active" : ""}>Flat shading</button></div>}
+        {workspace === "Model" && selectedObject && selectedObject.id !== "ground" && <div className="wb-mesh-panel"><span>SUBDIVISION</span><input type="range" min="1" max="12" value={selectedObject.segments} onChange={event => updateSelected({segments:Number(event.target.value)})}/><strong>{selectedObject.segments}</strong><button onClick={() => updateMaterialPrefs({flatShading:!flatShading})} className={flatShading ? "active" : ""}>Flat shading</button></div>}
         {notice && <div className="wb-view-notice">{notice}</div>}
       </div>
       {workspace === "Materials" && <aside className="wb-material-editor">
         <div className="wb-side-heading"><div><span>01 / SURFACE</span><strong>Material properties</strong></div><Paintbrush size={17}/></div>
-        <label className="wb-field"><span>Base colour</span><div className="wb-color-field"><input type="color" value={materialColor} onChange={event => setMaterialColor(event.target.value)}/><code>{materialColor.toUpperCase()}</code></div></label>
-        <label className="wb-field"><span>Roughness <b>{roughness.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" value={roughness} onChange={event => setRoughness(Number(event.target.value))}/></label>
-        <label className="wb-field"><span>Metalness <b>{metalness.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" value={metalness} onChange={event => setMetalness(Number(event.target.value))}/></label>
+        <label className="wb-field"><span>Base colour</span><div className="wb-color-field"><input type="color" value={materialColor} onChange={event => updateMaterialPrefs({materialColor:event.target.value})}/><code>{materialColor.toUpperCase()}</code></div></label>
+        <label className="wb-field"><span>Roughness <b>{roughness.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" value={roughness} onChange={event => updateMaterialPrefs({roughness:Number(event.target.value)})}/></label>
+        <label className="wb-field"><span>Metalness <b>{metalness.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" value={metalness} onChange={event => updateMaterialPrefs({metalness:Number(event.target.value)})}/></label>
         <div className="wb-divider"/>
         <div className="wb-side-heading"><div><span>02 / TEXTURE PAINT</span><strong>Paint canvas</strong></div><Brush size={17}/></div>
-        <div className="wb-paint-tools"><label><span>Brush</span><input type="color" value={brushColor} onChange={event => setBrushColor(event.target.value)}/></label><label><span>Size</span><input type="range" min="2" max="64" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))}/></label><button onClick={() => { const c=paintCanvasRef.current; const ctx=c?.getContext("2d"); if(c&&ctx){ctx.fillStyle="#b9b4a2";ctx.fillRect(0,0,c.width,c.height);paintTextureRef.current!.needsUpdate=true;setPainted(false);} }}><RotateCcw size={13}/> Clear</button></div>
-        <canvas ref={paintCanvasRef} width={512} height={512} className="wb-paint-canvas" onPointerDown={event => { paintDown.current=true; lastPaint.current=null; event.currentTarget.setPointerCapture(event.pointerId); paintAt(event); }} onPointerMove={event => { if(paintDown.current)paintAt(event); }} onPointerUp={() => { paintDown.current=false;lastPaint.current=null; }} onPointerCancel={() => { paintDown.current=false;lastPaint.current=null; }}/>
+        <div className="wb-paint-tools"><label><span>Brush</span><input type="color" value={brushColor} onChange={event => updateMaterialPrefs({brushColor:event.target.value})}/></label><label><span>Size</span><input type="range" min="2" max="64" value={brushSize} onChange={event => updateMaterialPrefs({brushSize:Number(event.target.value)})}/></label><button onClick={() => { const c=paintCanvasRef.current; const ctx=c?.getContext("2d"); if(c&&ctx){ctx.fillStyle="#b9b4a2";ctx.fillRect(0,0,c.width,c.height);paintTextureRef.current!.needsUpdate=true;window.localStorage.removeItem(STORAGE + "-paint");setPainted(false);} }}><RotateCcw size={13}/> Clear</button></div>
+        <canvas ref={paintCanvasRef} width={512} height={512} className="wb-paint-canvas" onPointerDown={event => { paintDown.current=true; lastPaint.current=null; event.currentTarget.setPointerCapture(event.pointerId); paintAt(event); }} onPointerMove={event => { if(paintDown.current)paintAt(event); }} onPointerUp={() => { paintDown.current=false;lastPaint.current=null;try { const data=paintCanvasRef.current?.toDataURL("image/png"); if(data) window.localStorage.setItem(STORAGE + "-paint",data); } catch { onStatus?.("Paint was applied but could not be saved in browser storage"); } }} onPointerCancel={() => { paintDown.current=false;lastPaint.current=null; }}/>
         <p className="wb-help-copy">{painted ? "Paint strokes are applied to the live material preview." : "Paint directly onto the texture. Strokes update the 3D material preview."}</p>
       </aside>}
     </div>

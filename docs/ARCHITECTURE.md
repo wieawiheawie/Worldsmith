@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-The current repository milestone is the reviewable editor shell. It provides a navigable interface with workspace-specific visual previews. It is not yet a complete engine, project database, modelling package or runtime.
+The current milestone contains working first-pass studios: a Three.js primitive scene/model editor, PBR material controls with canvas texture painting, keyframe transform animation, draggable UI/HUD elements, a connected visual logic graph and local audio preview. It is still a foundation—not a complete engine, modeller, animator, visual scripting VM or runtime.
 
 ## Architectural boundaries
 
@@ -16,14 +16,14 @@ Planned boundaries:
 - **Asset system:** import, processing, indexing, preview, dependency tracking and export.
 - **Scene model:** entities, components, transforms, hierarchy and serialisation.
 - **Runtime:** game loop, input, rendering, physics, audio and preview lifecycle.
-- **Studios:** scene, model, materials, animation, UI, logic and audio authoring tools.
+- **Studios:** first-pass Scene/Model, Materials/Texture Paint, Animation, UI, Logic and Audio authoring modules live under `src/studios`.
 - **Platform:** browser persistence, optional cloud integrations and build/export pipelines.
 
 ## Initial technical direction
 
 - React and TypeScript for the editor interface.
 - Vite for local development and production builds.
-- Keep graphics/runtime integrations behind internal interfaces until the first scene-editing milestone is proven.
+- Three.js currently powers the authoring viewport. Keep graphics/runtime integrations behind internal interfaces until the shared scene model and export path are audited.
 - Use browser workers and WebAssembly only where profiling demonstrates a real need.
 - Prefer open, documented formats for assets and project interchange.
 

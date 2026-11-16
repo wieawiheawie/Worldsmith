@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import CreativeWorkbench from "./studios/Workbench";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -287,6 +287,7 @@ function App() {
     return PANEL_ITEMS;
   });
   const [selectedObjects, setSelectedObjects] = useState<string[]>(["Terrain"]);
+  const [workbenchCommand, setWorkbenchCommand] = useState<{ id: string; type: "delete" | "duplicate" | "move"; names: string[]; direction?: -1 | 1 } | null>(null);
   const [inspectorData, setInspectorData] = useState<Record<string, InspectorState>>(() => {
     try {
       const saved = window.localStorage.getItem("worldsmith-editor-state");
@@ -322,6 +323,25 @@ function App() {
   const current = WORKSPACES.find((item) => item.id === workspace)!;
   const panelItems = workspaceItems[workspace].filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
   const selectedObject = selectedObjects[selectedObjects.length - 1] ?? "No selection";
+  const syncWorkbenchScene = useCallback((items: Array<{ label: string; kind: string }>) => {
+    const nextItems: TreeItem[] = items.map(item => ({ label: item.label, kind: item.kind }));
+    setWorkspaceItems(current => {
+      const unchanged = current.Scene.length === nextItems.length && current.Scene.every((item, index) => item.label === nextItems[index]?.label && item.kind === nextItems[index]?.kind);
+      if (unchanged) return current;
+      return { ...current, Scene: nextItems, Model: nextItems };
+    });
+  }, []);
+  const updateWorkbenchSelection = useCallback((name: string) => {
+    setSelectedObjects(current => current.length === 1 && current[0] === name ? current : [name]);
+    setSelectionAnchor(name);
+  }, []);
+  const clearWorkbenchCommand = useCallback((id: string) => {
+    setWorkbenchCommand(current => current?.id === id ? null : current);
+  }, []);
+  const requestWorkbenchCommand = (type: "delete" | "duplicate" | "move", names: string[], direction?: -1 | 1) => {
+    if (workspace !== "Scene" && workspace !== "Model") return;
+    setWorkbenchCommand({ id: Date.now().toString(36) + Math.random().toString(36).slice(2), type, names, direction });
+  };
   const inspectorKey = workspace + ":" + selectedObject;
   const inspector = inspectorData[inspectorKey] ?? makeInspectorState(workspace);
   const announce = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(""), 2400); };
@@ -411,6 +431,7 @@ function App() {
   };
   const deleteSelection = () => {
     if (selectedObjects.length === 0) { announce("Nothing selected"); return; }
+    requestWorkbenchCommand("delete", selectedObjects);
     const items = workspaceItems[workspace];
     const remove = new Set<number>();
     items.forEach((item, index) => {
@@ -431,6 +452,7 @@ function App() {
   };
   const duplicateSelection = () => {
     if (selectedObjects.length === 0) { announce("Nothing selected"); return; }
+    requestWorkbenchCommand("duplicate", selectedObjects);
     const items = workspaceItems[workspace];
     const selected = items.filter((item) => selectedObjects.includes(item.label));
     if (selected.length === 0) return;
@@ -470,7 +492,7 @@ function App() {
         }
       }
     }
-    if (moved) setWorkspaceItems((all) => ({ ...all, [workspace]: next }));
+    if (moved) { setWorkspaceItems((all) => ({ ...all, [workspace]: next })); requestWorkbenchCommand("move", selectedObjects, direction); }
     announce(moved ? "Selection moved in the hierarchy" : "Selection is already at that end of the hierarchy");
   };
   const importFiles = (files: FileList | null) => {
@@ -614,11 +636,11 @@ function App() {
             <div className="canvas-right-actions"><span className="view-mode">{workspace === "UI" ? "Design" : workspace === "Logic" ? "Graph" : workspace === "Audio" ? "Waveform" : workspace === "Assets" ? "Gallery" : cameraView} <ChevronDown size={12} /></span><button className="canvas-tool-button" title="Fit view" onClick={() => setZoom(75)}><Maximize2 size={14} /></button></div>
           </div>
 
-          <section className={"stage-area stage-" + workspace.toLowerCase() + (gridVisible ? "" : " grid-hidden") + (sceneLabelsVisible ? "" : " labels-hidden")}><div className="stage-zoom-layer" style={{ transform: `scale(${zoom / 75})` }}>{workspace === "Assets" ? <WorkspaceStage workspace={workspace} /> : <CreativeWorkbench workspace={workspace} onStatus={announce} />}</div>{playing && <div className="playing-banner"><span className="playing-dot" /> LIVE PREVIEW <button onClick={() => setPlaying(false)}>Stop preview</button></div>}{workspace !== "Assets" && <div className="stage-zoom-controls"><button onClick={() => setZoom((value) => Math.max(25, value - 5))}><ZoomOut size={13} /></button><span>{zoom}%</span><button onClick={() => setZoom((value) => Math.min(150, value + 5))}><ZoomIn size={13} /></button></div>}</section>
+          <section className={"stage-area stage-" + workspace.toLowerCase() + (gridVisible ? "" : " grid-hidden") + (sceneLabelsVisible ? "" : " labels-hidden")}><div className="stage-zoom-layer" style={{ transform: `scale(${zoom / 75})` }}>{workspace === "Assets" ? <WorkspaceStage workspace={workspace} /> : <CreativeWorkbench workspace={workspace} onStatus={announce} selectedObjectName={selectedObject} onSelectionChange={updateWorkbenchSelection} onSceneObjectsChange={syncWorkbenchScene} workbenchCommand={workbenchCommand} onWorkbenchCommandApplied={clearWorkbenchCommand} />}</div>{playing && <div className="playing-banner"><span className="playing-dot" /> LIVE PREVIEW <button onClick={() => setPlaying(false)}>Stop preview</button></div>}{workspace !== "Assets" && <div className="stage-zoom-controls"><button onClick={() => setZoom((value) => Math.max(25, value - 5))}><ZoomOut size={13} /></button><span>{zoom}%</span><button onClick={() => setZoom((value) => Math.min(150, value + 5))}><ZoomIn size={13} /></button></div>}</section>
 
           {showBottom && <div className="resize-handle horizontal" onPointerDown={(event) => beginResize("bottom", event)} title="Resize bottom panel" />}{showBottom && <section className="bottom-dock" style={{ height: bottomHeight, flexBasis: bottomHeight }}><div className="dock-header"><div className="dock-tabs"><button className={dockTab === "Assets" ? "active" : ""} onClick={() => setDockTab("Assets")}><FolderOpen size={14} /> Assets</button><button className={dockTab === "Timeline" ? "active" : ""} onClick={() => setDockTab("Timeline")}><Clock3 size={14} /> Timeline</button><button className={dockTab === "Console" ? "active" : ""} onClick={() => setDockTab("Console")}><Terminal size={14} /> Console <span className="console-count">2</span></button></div><div className="dock-actions"><button className="subtle-icon" title="Add asset files" onClick={() => document.getElementById("worldsmith-file-input")?.click()}><Plus size={14} /></button><button className="subtle-icon" title="Collapse bottom panel" onClick={() => setShowBottom(false)}><PanelBottom size={14} /></button></div></div><div className="dock-body"><DockContent tab={dockTab} workspace={workspace} selectedAsset={selectedDockAsset} onPickAsset={(name) => { setSelectedDockAsset(name); announce(`Asset selected: ${name}`); }} />{importedAssets.length > 0 && <div className="imported-asset-list">{importedAssets.map((name, index) => <span key={`${name}-${index}`}>{name}</span>)}</div>}</div></section>}
           {!showBottom && <button className="reopen-dock" onClick={() => setShowBottom(true)}><PanelBottom size={14} /> Show bottom panel</button>}
-        </main>{showRight && <div className="resize-handle vertical" onPointerDown={(event) => beginResize("right", event)} title="Resize inspector" />}{showRight && <aside className="right-panel" style={{ width: rightWidth, flexBasis: rightWidth }}>
+        </main>{showRight && workspace === "Assets" && <div className="resize-handle vertical" onPointerDown={(event) => beginResize("right", event)} title="Resize inspector" />}{showRight && workspace === "Assets" && <aside className="right-panel" style={{ width: rightWidth, flexBasis: rightWidth }}>
           <div className="inspector-top"><div><span className="eyebrow">INSPECTOR</span><h2>{selectedObject}</h2></div><button className="subtle-icon" onClick={() => setShowRight(false)} title="Hide inspector"><X size={14} /></button></div>
           <div className="inspector-object"><div className="object-avatar"><Cuboid size={18} /></div><div><strong>{selectedObject}</strong><small>{workspace === "UI" ? "Canvas element" : workspace === "Logic" ? "Logic node" : workspace === "Materials" ? "Material asset" : workspace === "Animation" ? "Rig element" : "Scene object"} · Active</small></div><button className="subtle-icon" title="Show components" onClick={() => setInspectorTab("Components")}><MoreHorizontal size={15} /></button></div>
           <div className="inspector-tabs"><button className={inspectorTab === "Properties" ? "active" : ""} onClick={() => setInspectorTab("Properties")}>Properties</button><button className={inspectorTab === "Components" ? "active" : ""} onClick={() => setInspectorTab("Components")}>Components <span>{inspector.components.length}</span></button></div>
@@ -639,7 +661,7 @@ function App() {
         </aside>}
       </div>
 
-      {(!showLeft || !showRight) && <div className="panel-restore">{!showLeft && <button onClick={() => setShowLeft(true)}><Layers size={14} /> Show hierarchy</button>}{!showRight && <button onClick={() => setShowRight(true)}><SlidersHorizontal size={14} /> Show inspector</button>}</div>}
+      {(!showLeft || (workspace === "Assets" && !showRight)) && <div className="panel-restore">{!showLeft && <button onClick={() => setShowLeft(true)}><Layers size={14} /> Show hierarchy</button>}{workspace === "Assets" && !showRight && <button onClick={() => setShowRight(true)}><SlidersHorizontal size={14} /> Show inspector</button>}</div>}
       <footer className="statusbar"><div className="status-left"><span className="status-branch"><span className="tiny-dot" /> Main</span><span className="status-separator" /><span>Worldsmith Shell Preview</span></div><div className="status-right"><span>Local project</span><span className="status-separator" /><span>Web editor</span><span className="status-separator" /><span>100% UI scale</span></div></footer>
 
       <input id="worldsmith-file-input" type="file" multiple hidden onChange={(event) => { importFiles(event.target.files); event.target.value = ""; }} />
