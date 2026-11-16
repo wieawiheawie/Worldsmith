@@ -12,7 +12,7 @@ The shell includes:
 - Eight top-level workspaces: Scene, Model, Materials, Animation, UI, Logic, Audio and Assets.
 - A unified editor layout with tool rail, workspace explorer, central work area, inspector and bottom dock.
 - Distinct visual workspace previews so the interface direction can be reviewed before implementing the underlying tools.
-- Working workspace navigation, selection, inspector tabs, dock tabs, panel visibility, zoom controls, add menu, command palette and play/stop preview state.
+- Working workspace navigation, selection, inspector tabs, dock tabs, draggable panel resizing, panel visibility, zoom controls, add menu, command palette and play/stop preview state.
 - Keyboard shortcuts: Ctrl/Cmd+K for command search, Ctrl/Cmd+S for save feedback, Q/W/E/R/B/S for tools and Space for preview.
 
 ## Run in GitHub Codespaces

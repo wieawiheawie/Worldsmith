@@ -247,3 +247,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid #71cdbf; outline-
   .save-status,.preview-button { display: none; }.workspace-tab { min-width: 64px; gap: 5px; }.workspace-tab span { font-size: 10px; }.left-panel { flex-basis: 190px; }.right-panel { flex-basis: 225px; }.brand-lockup { min-width: 132px; }.project-switcher { min-width: 160px; }.command-trigger { min-width: 130px; }.command-trigger span { display: none; }
 }
 @media (max-height: 760px) { .bottom-dock { height: 145px; flex-basis: 145px; }.panel-heading,.inspector-top { height: 57px; flex-basis: 57px; }.inspector-object { height: 57px; flex-basis: 57px; } }
+
+
+/* Drag handles for the editor's dockable panels. */
+.resize-handle { position: relative; z-index: 4; flex: 0 0 auto; background: transparent; touch-action: none; user-select: none; }
+.resize-handle.vertical { width: 5px; cursor: col-resize; }
+.resize-handle.horizontal { height: 5px; cursor: row-resize; }
+.resize-handle.vertical::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; }
+.resize-handle.horizontal::after { content: ''; position: absolute; right: 0; left: 0; top: 2px; height: 1px; background: transparent; }
+.resize-handle:hover,.resize-handle:active { background: rgba(113,205,191,.13); }
+.resize-handle.vertical:hover::after,.resize-handle.vertical:active::after { background: #71cdbf; }
+.resize-handle.horizontal:hover::after,.resize-handle.horizontal:active::after { background: #71cdbf; }
+body.is-resizing { user-select: none; cursor: col-resize; }
+body.is-resizing:has(.resize-handle.horizontal:active) { cursor: row-resize; }
+@media (max-width: 850px) {
+  .left-panel { min-width: 175px; }
+  .right-panel { min-width: 205px; }
+  .workspace-tab { min-width: 57px; }
+}

@@ -261,10 +261,25 @@ function App() {
   const [showRight, setShowRight] = useState(true);
   const [showBottom, setShowBottom] = useState(true);
   const [zoom, setZoom] = useState(75);
+  const [leftWidth, setLeftWidth] = useState(236);
+  const [rightWidth, setRightWidth] = useState(286);
+  const [bottomHeight, setBottomHeight] = useState(186);
 
   const current = WORKSPACES.find((item) => item.id === workspace)!;
   const panelItems = PANEL_ITEMS[workspace].filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
   const announce = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(""), 2400); };
+  const beginResize = (side: "left" | "right" | "bottom", event: import("react").PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX; const startY = event.clientY;
+    const startSize = side === "left" ? leftWidth : side === "right" ? rightWidth : bottomHeight;
+    const onMove = (move: PointerEvent) => {
+      if (side === "left") setLeftWidth(Math.max(185, Math.min(380, startSize + move.clientX - startX)));
+      if (side === "right") setRightWidth(Math.max(220, Math.min(390, startSize + startX - move.clientX)));
+      if (side === "bottom") setBottomHeight(Math.max(105, Math.min(360, startSize + startY - move.clientY)));
+    };
+    const onUp = () => { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); document.body.classList.remove("is-resizing"); };
+    document.body.classList.add("is-resizing"); document.addEventListener("pointermove", onMove); document.addEventListener("pointerup", onUp);
+  };
 
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
@@ -284,7 +299,7 @@ function App() {
   }, []);
 
   const commands = useMemo(() => ["Create new scene", "Add cube", "Add sphere", "Add light", "Open Model Studio", "Open Materials Studio", "Open Animation Studio", "Open UI Studio", "Open Logic Studio", "Toggle asset panel", "Toggle inspector", "Save project", "Play preview"].filter((item) => item.toLowerCase().includes(paletteQuery.toLowerCase())), [paletteQuery]);
-  const chooseWorkspace = (id: WorkspaceId) => { setWorkspace(id); setSearch(""); setSelectedTool("select"); announce(id + " workspace"); };
+  const chooseWorkspace = (id: WorkspaceId) => { setWorkspace(id); setSearch(""); setSelectedTool("select"); setSelectedObject(PANEL_ITEMS[id][0]?.label ?? ""); setInspectorTab("Properties"); announce(id + " workspace"); };
   const runCommand = (command: string) => {
     if (command.includes("Model")) setWorkspace("Model");
     else if (command.includes("Materials")) setWorkspace("Materials");
@@ -325,15 +340,13 @@ function App() {
       <div className="editor-layout">
         <aside className="tool-rail"><div className="rail-tools">{TOOLS.map((tool) => { const Icon = tool.icon; return <button key={tool.id} className={"rail-tool " + (selectedTool === tool.id ? "active" : "")} title={tool.label + " (" + tool.key + ")"} onClick={() => setSelectedTool(tool.id)}><Icon size={18} /><span>{tool.key}</span></button>; })}</div><div className="rail-bottom"><button className="rail-tool" title="Help" onClick={() => announce("Worldsmith help centre")}><CircleHelp size={18} /></button><button className="rail-tool" title="Preferences" onClick={() => announce("Preferences")}><Settings2 size={18} /></button></div></aside>
 
-        {showLeft && <aside className="left-panel">
+        {showLeft && <aside className="left-panel" style={{ width: leftWidth, flexBasis: leftWidth }}>
           <div className="panel-heading"><div><span className="eyebrow">WORKSPACE</span><h2>{workspaceTitle[workspace]}</h2></div><button className="subtle-icon" onClick={() => setShowLeft(false)} title="Hide panel"><X size={14} /></button></div>
           <div className="panel-action-row"><button className="subtle-select"><Layers size={13} /> {workspace === "Assets" ? "All assets" : workspace === "UI" ? "HUD_Main" : workspace === "Logic" ? "Player Controller" : workspace === "Animation" ? "Character Rig" : workspace === "Materials" ? "Character Material" : workspace === "Model" ? "Character Mesh" : workspace === "Audio" ? "Main Audio" : "Main Scene"} <ChevronDown size={12} /></button><button className="subtle-icon" title="Add item" onClick={() => setShowAddMenu(true)}><Plus size={15} /></button></div>
           <div className="panel-search"><Search size={13} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={"Filter " + workspace.toLowerCase() + "..."} /><kbd>⌘ F</kbd></div>
           <div className="tree-list">{panelItems.map((item, index) => { const Icon = KIND_ICONS[item.kind] || Box; return <button key={item.label} className={"tree-item " + (selectedObject === item.label ? "selected" : "")} style={{ paddingLeft: 12 + (item.indent || 0) * 15 }} onClick={() => setSelectedObject(item.label)}>{item.indent ? <ChevronRight className="tree-chevron" size={12} /> : <span className="tree-spacer" />}<Icon size={14} className={"tree-kind kind-" + item.kind} /><span>{item.label}</span>{index === 0 && <MoreHorizontal size={14} className="tree-more" />}</button>; })}{panelItems.length === 0 && <div className="empty-filter">No matching items</div>}</div>
           <div className="panel-footer"><span>{panelItems.length} items</span><span>● Synced</span></div>
-        </aside>}
-
-        <main className="center-workspace">
+        </aside>}<div className="resize-handle vertical" onPointerDown={(event) => beginResize("left", event)} title="Resize hierarchy" /><main className="center-workspace">
           <div className="canvas-toolbar"><div className="canvas-breadcrumb"><span>{workspace}</span><ChevronRight size={12} /><strong>{workspace === "Scene" ? "Main Scene" : workspace === "UI" ? "HUD_Main" : workspace === "Assets" ? "All Assets" : workspace === "Logic" ? "Player Controller" : workspace === "Audio" ? "Main Audio" : workspace === "Model" ? "Character_Mesh" : workspace === "Materials" ? "Character Material" : "Walk_Cycle"}</strong><span className="unsaved-mark" /></div>
             <div className="canvas-tool-actions"><button className={"canvas-tool-button " + (selectedTool === "select" ? "active" : "")} onClick={() => setSelectedTool("select")} title="Select"><MousePointer2 size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "move" ? "active" : "")} onClick={() => setSelectedTool("move")} title="Move"><Move size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "rotate" ? "active" : "")} onClick={() => setSelectedTool("rotate")} title="Rotate"><RotateCw size={15} /></button><button className={"canvas-tool-button " + (selectedTool === "scale" ? "active" : "")} onClick={() => setSelectedTool("scale")} title="Scale"><Maximize2 size={15} /></button><span className="toolbar-separator" /><button className="canvas-tool-button" title="Toggle grid" onClick={() => announce("Grid visibility toggled")}><Grid3X3 size={15} /></button><button className="canvas-tool-button" title="Camera view" onClick={() => announce("Camera view options")}><Camera size={15} /></button><button className="canvas-tool-button" title="Viewport options" onClick={() => announce("Viewport options")}><MoreHorizontal size={16} /></button></div>
             <div className="canvas-right-actions"><span className="view-mode">{workspace === "UI" ? "Design" : workspace === "Logic" ? "Graph" : workspace === "Audio" ? "Waveform" : workspace === "Assets" ? "Gallery" : "Perspective"} <ChevronDown size={12} /></span><button className="canvas-tool-button" title="Fit view" onClick={() => setZoom(75)}><Maximize2 size={14} /></button></div>
@@ -341,11 +354,9 @@ function App() {
 
           <section className={"stage-area stage-" + workspace.toLowerCase()}><WorkspaceStage workspace={workspace} />{playing && <div className="playing-banner"><span className="playing-dot" /> LIVE PREVIEW <button onClick={() => setPlaying(false)}>Stop preview</button></div>}{workspace !== "Assets" && <div className="stage-zoom-controls"><button onClick={() => setZoom((value) => Math.max(25, value - 5))}><ZoomOut size={13} /></button><span>{zoom}%</span><button onClick={() => setZoom((value) => Math.min(150, value + 5))}><ZoomIn size={13} /></button></div>}</section>
 
-          {showBottom && <section className="bottom-dock"><div className="dock-header"><div className="dock-tabs"><button className={dockTab === "Assets" ? "active" : ""} onClick={() => setDockTab("Assets")}><FolderOpen size={14} /> Assets</button><button className={dockTab === "Timeline" ? "active" : ""} onClick={() => setDockTab("Timeline")}><Clock3 size={14} /> Timeline</button><button className={dockTab === "Console" ? "active" : ""} onClick={() => setDockTab("Console")}><Terminal size={14} /> Console <span className="console-count">2</span></button></div><div className="dock-actions"><button className="subtle-icon" title="Add asset" onClick={() => announce("Asset import will be connected in the asset pipeline milestone")}><Plus size={14} /></button><button className="subtle-icon" title="Collapse bottom panel" onClick={() => setShowBottom(false)}><PanelBottom size={14} /></button></div></div><div className="dock-body"><DockContent tab={dockTab} workspace={workspace} /></div></section>}
+          {showBottom && <div className="resize-handle horizontal" onPointerDown={(event) => beginResize("bottom", event)} title="Resize bottom panel" />}{showBottom && <section className="bottom-dock" style={{ height: bottomHeight, flexBasis: bottomHeight }}><div className="dock-header"><div className="dock-tabs"><button className={dockTab === "Assets" ? "active" : ""} onClick={() => setDockTab("Assets")}><FolderOpen size={14} /> Assets</button><button className={dockTab === "Timeline" ? "active" : ""} onClick={() => setDockTab("Timeline")}><Clock3 size={14} /> Timeline</button><button className={dockTab === "Console" ? "active" : ""} onClick={() => setDockTab("Console")}><Terminal size={14} /> Console <span className="console-count">2</span></button></div><div className="dock-actions"><button className="subtle-icon" title="Add asset" onClick={() => announce("Asset import will be connected in the asset pipeline milestone")}><Plus size={14} /></button><button className="subtle-icon" title="Collapse bottom panel" onClick={() => setShowBottom(false)}><PanelBottom size={14} /></button></div></div><div className="dock-body"><DockContent tab={dockTab} workspace={workspace} /></div></section>}
           {!showBottom && <button className="reopen-dock" onClick={() => setShowBottom(true)}><PanelBottom size={14} /> Show bottom panel</button>}
-        </main>
-
-        {showRight && <aside className="right-panel">
+        </main>{showRight && <div className="resize-handle vertical" onPointerDown={(event) => beginResize("right", event)} title="Resize inspector" />}{showRight && <aside className="right-panel" style={{ width: rightWidth, flexBasis: rightWidth }}>
           <div className="inspector-top"><div><span className="eyebrow">INSPECTOR</span><h2>{selectedObject}</h2></div><button className="subtle-icon" onClick={() => setShowRight(false)} title="Hide inspector"><X size={14} /></button></div>
           <div className="inspector-object"><div className="object-avatar"><Cuboid size={18} /></div><div><strong>{selectedObject}</strong><small>{workspace === "UI" ? "Canvas element" : workspace === "Logic" ? "Logic node" : workspace === "Materials" ? "Material asset" : workspace === "Animation" ? "Rig element" : "Scene object"} · Active</small></div><button className="subtle-icon"><MoreHorizontal size={15} /></button></div>
           <div className="inspector-tabs"><button className={inspectorTab === "Properties" ? "active" : ""} onClick={() => setInspectorTab("Properties")}>Properties</button><button className={inspectorTab === "Components" ? "active" : ""} onClick={() => setInspectorTab("Components")}>Components <span>3</span></button></div>
