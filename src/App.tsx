@@ -12,6 +12,25 @@ type WorkspaceId = "Scene" | "Model" | "Materials" | "Animation" | "UI" | "Logic
 type DockTab = "Assets" | "Timeline" | "Console";
 type ToolId = "select" | "move" | "rotate" | "scale" | "paint" | "sculpt";
 type TreeItem = { label: string; kind: string; indent?: number };
+type InspectorState = {
+  position: [string, string, string];
+  rotation: [string, string, string];
+  scale: [string, string, string];
+  setting: string;
+  detailValue: string;
+  tags: string[];
+  components: string[];
+};
+const makeInspectorState = (workspace: WorkspaceId): InspectorState => ({
+  position: ["0.00", "0.00", "0.00"],
+  rotation: ["0°", "0°", "0°"],
+  scale: ["1.00", "1.00", "1.00"],
+  setting: workspace === "UI" ? "Center" : workspace === "Materials" ? "Lit / PBR" : workspace === "Animation" ? "30 FPS" : workspace === "Logic" ? "On event" : "Visible",
+  detailValue: workspace === "UI" ? "420" : workspace === "Materials" ? "0.68" : workspace === "Animation" ? "1.20" : workspace === "Logic" ? "True" : "Default",
+  tags: ["Environment", "Editable"],
+  components: ["Transform", workspace === "UI" ? "UI Renderer" : "Renderer", workspace === "Logic" ? "Event Listener" : "Metadata"]
+});
+const AVAILABLE_COMPONENTS = ["Box Collider", "Rigid Body", "Audio Source", "Camera", "Light", "Script", "Animator", "Canvas Renderer"];
 
 const WORKSPACES: { id: WorkspaceId; icon: LucideIcon; hint: string }[] = [
   { id: "Scene", icon: PanelsTopLeft, hint: "Build worlds and arrange objects" },
@@ -267,6 +286,15 @@ function App() {
     return PANEL_ITEMS;
   });
   const [selectedObjects, setSelectedObjects] = useState<string[]>(["Terrain"]);
+  const [inspectorData, setInspectorData] = useState<Record<string, InspectorState>>(() => {
+    try {
+      const saved = window.localStorage.getItem("worldsmith-editor-state");
+      if (saved) return (JSON.parse(saved) as { inspectorData?: Record<string, InspectorState> }).inspectorData ?? {};
+    } catch { /* Use fresh inspector values if the saved state cannot be read. */ }
+    return {};
+  });
+  const [showComponentPicker, setShowComponentPicker] = useState(false);
+  const [selectedDockAsset, setSelectedDockAsset] = useState("");
   const [selectionAnchor, setSelectionAnchor] = useState("Terrain");
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
@@ -293,14 +321,57 @@ function App() {
   const current = WORKSPACES.find((item) => item.id === workspace)!;
   const panelItems = workspaceItems[workspace].filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
   const selectedObject = selectedObjects[selectedObjects.length - 1] ?? "No selection";
+  const inspectorKey = workspace + ":" + selectedObject;
+  const inspector = inspectorData[inspectorKey] ?? makeInspectorState(workspace);
   const announce = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(""), 2400); };
   const saveProject = () => {
     try {
-      window.localStorage.setItem("worldsmith-editor-state", JSON.stringify({ workspaceItems, workspace, importedAssets }));
+      window.localStorage.setItem("worldsmith-editor-state", JSON.stringify({ workspaceItems, workspace, importedAssets, inspectorData }));
       announce("Project saved in this browser");
     } catch {
       announce("Could not save: browser storage is full or unavailable");
     }
+  };
+  const updateInspector = (patch: Partial<InspectorState>) => {
+    setInspectorData((current) => ({
+      ...current,
+      [inspectorKey]: { ...makeInspectorState(workspace), ...(current[inspectorKey] ?? {}), ...patch }
+    }));
+  };
+  const updateTransform = (axis: "position" | "rotation" | "scale", index: number, value: string) => {
+    const next = [...inspector[axis]] as [string, string, string];
+    next[index] = value;
+    updateInspector({ [axis]: next });
+  };
+  const resetTransform = () => {
+    updateInspector({ position: ["0.00", "0.00", "0.00"], rotation: ["0°", "0°", "0°"], scale: ["1.00", "1.00", "1.00"] });
+    announce("Transform reset");
+  };
+  const cycleInspectorSetting = () => {
+    const choices = workspace === "UI" ? ["Center", "Top Left", "Bottom Right", "Stretch"]
+      : workspace === "Materials" ? ["Lit / PBR", "Unlit", "Wireframe"]
+      : workspace === "Animation" ? ["24 FPS", "30 FPS", "60 FPS"]
+      : workspace === "Logic" ? ["On event", "Every frame", "Manual"]
+      : ["Visible", "Hidden"];
+    const next = choices[(choices.indexOf(inspector.setting) + 1) % choices.length];
+    updateInspector({ setting: next });
+  };
+  const addTag = () => {
+    const choices = ["Gameplay", "Static", "Interactable", "EditorOnly"];
+    const next = choices.find((tag) => !inspector.tags.includes(tag));
+    if (next) updateInspector({ tags: [...inspector.tags, next] });
+    else announce("All sample tags are already added");
+  };
+  const addComponent = (name: string) => {
+    if (inspector.components.includes(name)) { announce(`${name} is already attached`); return; }
+    updateInspector({ components: [...inspector.components, name] });
+    setShowComponentPicker(false);
+    announce(`${name} component added`);
+  };
+  const removeComponent = (name: string) => {
+    if (name === "Transform") { announce("Transform is required and cannot be removed"); return; }
+    updateInspector({ components: inspector.components.filter((component) => component !== name) });
+    announce(`${name} component removed`);
   };
   const createItem = (label: string, kind: string) => {
     const existing = new Set(workspaceItems[workspace].map((item) => item.label));
